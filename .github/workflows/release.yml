@@ -1,0 +1,49 @@
+name: Release
+
+# Publica el binario al empujar una etiqueta de versión: `git tag v1.0.0 && git push origin v1.0.0`.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Tests
+        run: cargo test --bin ruuutu
+
+      # Sin `--bin ruuutu`: las herramientas de diseño están tras la feature `devtools`, así que
+      # una compilación normal ya produce únicamente ruuutu.exe.
+      - name: Compilación de release
+        run: cargo build --release
+
+      # El usuario descarga un .exe suelto de internet; darle con qué comprobarlo es lo mínimo.
+      - name: Calcular SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash target\release\ruuutu.exe -Algorithm SHA256).Hash
+          "$hash  ruuutu.exe" | Out-File -FilePath ruuutu.exe.sha256 -Encoding ascii
+          Write-Host "SHA256: $hash"
+
+      - name: Publicar la release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            target\release\ruuutu.exe `
+            ruuutu.exe.sha256 `
+            --title $env:GITHUB_REF_NAME `
+            --generate-notes

@@ -1,9 +1,23 @@
 [package]
 name = "ruuutu"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+rust-version = "1.85"
 default-run = "ruuutu"
 build = "build.rs"
+license = "GPL-3.0-or-later"
+description = "Utilidad de captura de pantalla ligera para Windows, estilo Lightshot, escrita en Rust sin GPU ni frameworks pesados."
+repository = "https://github.com/juanre7/Ruuutu"
+readme = "README.md"
+keywords = ["screenshot", "screen-capture", "windows", "tray", "lightshot"]
+categories = ["multimedia::images", "os::windows-apis"]
+exclude = ["/.github"]
+
+# Herramientas internas de diseño y pruebas manuales. Van tras una feature para que
+# `cargo build --release` y `cargo install` produzcan solo `ruuutu.exe` y no dejen cinco
+# binarios de desarrollo en el PATH del usuario.
+[features]
+devtools = []
 
 [[bin]]
 name = "ruuutu"
@@ -12,26 +26,32 @@ path = "src/main.rs"
 [[bin]]
 name = "font_preview"
 path = "src/bin/font_preview.rs"
+required-features = ["devtools"]
 
 [[bin]]
 name = "margin_preview"
 path = "src/bin/margin_preview.rs"
+required-features = ["devtools"]
 
 [[bin]]
 name = "margin_editor"
 path = "src/bin/margin_editor.rs"
+required-features = ["devtools"]
 
 [[bin]]
 name = "tray_editor"
 path = "src/bin/tray_editor.rs"
+required-features = ["devtools"]
 
 [[bin]]
 name = "clipboard_test"
 path = "src/bin/clipboard_test.rs"
+required-features = ["devtools"]
 
 [[bin]]
 name = "test_bench"
 path = "src/bin/test_bench.rs"
+required-features = ["devtools"]
 
 [dependencies]
 anyhow = "1.0"

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 use anyhow::{Context, Result};
 use image::RgbaImage;
 use softbuffer::{Context as SbContext, Surface};

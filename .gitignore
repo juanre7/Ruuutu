@@ -1,1 +1,5 @@
 /target
+
+# Notas internas de desarrollo, no forman parte de la distribución.
+/AGENTS.md
+/CLAUDE.md

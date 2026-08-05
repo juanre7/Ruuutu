@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    # Ruuutu es exclusivamente Windows: captura por GDI, bandeja del sistema, hook de teclado
+    # de bajo nivel y diálogo de guardado por COM. No hay nada que probar en otro runner.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cachear dependencias
+        uses: Swatinem/rust-cache@v2
+
+      # La suite unitaria cubre la lógica pura: persistencia de config.rs y geometría de
+      # overlay.rs. El resto de la batería (`test_bench`) necesita escritorio real, toca el
+      # portapapeles y captura la pantalla, así que no corre aquí.
+      - name: Tests
+        run: cargo test --bin ruuutu
+
+      - name: Compilación de release
+        run: cargo build --release
+
+      # Informativo, no bloqueante: el árbol arrastra 6 avisos previos (dos `to_*` que toman
+      # `&self` y cuatro funciones con más de 7 argumentos en el código de dibujo). Cuando
+      # estén a cero, añadir `-- -D warnings` para que esto pase a ser una puerta de verdad.
+      - name: Clippy
+        run: cargo clippy --all-targets --features devtools
+        continue-on-error: true

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 use anyhow::{Context, Result};
 use chrono::Local;
 use image::codecs::jpeg::JpegEncoder;

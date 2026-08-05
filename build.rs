@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 //! Embeds the Ruuutu icon into `ruuutu.exe`.
 //!
 //! The icon is not an asset on disk: it is drawn by `src/icon.rs`, the very same code the tray

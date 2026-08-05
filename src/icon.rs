@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 //! Procedural Ruuutu icon, drawn in code at any square size.
 //!
 //! Single source of truth for both the tray icon (rasterized at runtime by `tray.rs`) and the

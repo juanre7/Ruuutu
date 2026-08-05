@@ -23,7 +23,9 @@ Al ejecutar `ruuutu.exe`, el programa se minimiza en la bandeja del sistema (Sys
   - `⚡ Tomar Captura`
   - `🎨 Formato de Imagen`: WebP, PNG o JPEG.
   - `⚙️ Calidad` / `🗜️ Nivel de Compresión`: se adapta al formato elegido (ver más abajo).
-  - `📐 Escala de Guardado`: 100 %, 75 %, 50 % o 25 %.
+  - `📐 Escala de Guardado`: 100 %, 75 %, 50 % o 25 %. Reescala la **imagen guardada**.
+  - `🔠 Escala del Texto (captura)`: de 0,5x a 2x. Agranda la **interfaz de la superposición**
+    (botones, iconos y etiqueta) sin tocar ni un píxel de la imagen. No confundir con la anterior.
   - `⌨️ Atajo de Teclado`: PrtScn/Alt+A, Ctrl+Shift+S, Alt+PrtScn o Shift+PrtScn.
   - `🚀 Iniciar con Windows`
   - `🔄 Restaurar Ajustes por Defecto`, `📁 Abrir Carpeta de Capturas`, `❌ Salir`
@@ -59,21 +61,60 @@ ruuutu.exe --capture
 
 ---
 
+## 📦 Instalación
+
+Descarga `ruuutu.exe` de la [última release](https://github.com/juanre7/Ruuutu/releases/latest) y
+ejecútalo. No hay instalador ni dependencias: es un único binario que se va a la bandeja del sistema.
+Para que arranque con Windows, marca `🚀 Iniciar con Windows` en su menú.
+
+---
+
 ## 🛠️ Compilación desde el código fuente
 
 Asegúrate de tener instalado Rust (cargo 1.85+):
 
 ```bash
-git clone https://github.com/tu-usuario/Ruuutu.git
+git clone https://github.com/juanre7/Ruuutu.git
 cd Ruuutu
-cargo build --release --bin ruuutu
+cargo build --release
 ```
 
-El ejecutable optimizado estará listo en `target/release/ruuutu.exe` con un tamaño aproximado de **~3.3 MB**.
-La mayor parte del crecimiento sobre las versiones iniciales (~1.4 MB) es **libwebp** enlazado estáticamente,
+El ejecutable optimizado estará listo en `target/release/ruuutu.exe` con un tamaño aproximado de **3,5 MB**.
+La mayor parte del crecimiento sobre las versiones iniciales (~1,4 MB) es **libwebp** enlazado estáticamente,
 necesario para poder ofrecer WebP con pérdida y calidad ajustable.
+
+### Desarrollo
+
+Los tests de lógica pura (persistencia de la configuración y geometría de la superposición) no
+necesitan sesión gráfica:
+
+```bash
+cargo test --bin ruuutu
+cargo clippy --all-targets
+```
+
+El repositorio incluye además varias herramientas internas de diseño visual —previsualización de la
+tipografía, editor interactivo de márgenes, maqueta del menú de bandeja y un banco de pruebas que sí
+toca el portapapeles y la pantalla—. Están tras la feature `devtools` para que una compilación normal
+no las produzca:
+
+```bash
+cargo run --features devtools --bin margin_editor
+cargo run --features devtools --bin test_bench
+```
 
 ---
 
 ## 📄 Licencia
-Proyecto Open Source bajo licencias MIT u Apache-2.0.
+
+Copyright (C) 2026 juanre7
+
+Ruuutu es software libre: puedes redistribuirlo y/o modificarlo bajo los términos de la
+**Licencia Pública General de GNU** publicada por la Free Software Foundation, en su
+**versión 3 o cualquier versión posterior**.
+
+Este programa se distribuye con la esperanza de que sea útil, pero **SIN NINGUNA GARANTÍA**; ni
+siquiera la garantía implícita de COMERCIABILIDAD o APTITUD PARA UN PROPÓSITO PARTICULAR. Consulta
+la GNU General Public License para más detalles. El texto completo está en [LICENSE](LICENSE).
+
+Identificador SPDX: `GPL-3.0-or-later`

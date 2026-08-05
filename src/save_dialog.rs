@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 //! Native Windows "Guardar como" dialog with Ruuutu's encoder settings embedded in it.
 //!
 //! `rfd` only exposes extension filters, so the quality and scale controls are added

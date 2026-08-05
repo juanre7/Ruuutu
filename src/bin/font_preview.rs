@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use anyhow::Result;
 use softbuffer::{Context as SbContext, Surface};

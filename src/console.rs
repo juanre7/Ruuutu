@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 //! Console attachment for a GUI-subsystem binary.
 //!
 //! `src/main.rs` is built with `#![windows_subsystem = "windows"]`, so double-clicking
