@@ -29,25 +29,40 @@ fn consolas_bold() -> Option<&'static FontRef<'static>> {
         .as_ref()
 }
 
+/// The software render target: the `0xRRGGBB` pixel buffer plus the dimensions that
+/// describe it.
+///
+/// Every drawing routine used to take `(buffer, buf_w, buf_h)` as its first three
+/// parameters and thread them through by hand. They are one thing — a pixel is at
+/// `pixels[y * w + x]`, and that only holds if the three agree — so they travel together.
+pub struct Canvas<'a> {
+    pub pixels: &'a mut [u32],
+    pub w: usize,
+    pub h: usize,
+}
+
+impl<'a> Canvas<'a> {
+    pub fn new(pixels: &'a mut [u32], w: usize, h: usize) -> Self {
+        Self { pixels, w, h }
+    }
+}
+
 /// Draw Consolas Bold Mono text with smooth subpixel antialiasing.
 pub fn draw_consolas_bold_text(
-    buffer: &mut [u32],
-    buf_w: usize,
-    buf_h: usize,
+    canvas: &mut Canvas,
     text: &str,
     start_x: usize,
     start_y: usize,
     color_rgb: u32,
     font_size_px: f32,
 ) {
-    draw_consolas_bold_text_clipped(buffer, buf_w, buf_h, text, start_x, start_y, buf_w, color_rgb, font_size_px);
+    let max_x = canvas.w;
+    draw_consolas_bold_text_clipped(canvas, text, start_x, start_y, max_x, color_rgb, font_size_px);
 }
 
 /// Draw Consolas Bold Mono text clipped to max_x boundary so letters appear smoothly as space opens.
 pub fn draw_consolas_bold_text_clipped(
-    buffer: &mut [u32],
-    buf_w: usize,
-    buf_h: usize,
+    canvas: &mut Canvas,
     text: &str,
     start_x: usize,
     start_y: usize,
@@ -84,9 +99,9 @@ pub fn draw_consolas_bold_text_clipped(
                 let px = (bounds.min.x as i32 + x as i32) as usize;
                 let py = (bounds.min.y as i32 + y as i32) as usize;
 
-                if px < buf_w && px < max_x && py < buf_h {
-                    let idx = py * buf_w + px;
-                    let existing = buffer[idx];
+                if px < canvas.w && px < max_x && py < canvas.h {
+                    let idx = py * canvas.w + px;
+                    let existing = canvas.pixels[idx];
 
                     let bg_r = ((existing >> 16) & 0xFF) as f32;
                     let bg_g = ((existing >> 8) & 0xFF) as f32;
@@ -97,7 +112,7 @@ pub fn draw_consolas_bold_text_clipped(
                     let out_g = (text_g * alpha + bg_g * (1.0 - alpha)) as u32;
                     let out_b = (text_b * alpha + bg_b * (1.0 - alpha)) as u32;
 
-                    buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
+                    canvas.pixels[idx] = (out_r << 16) | (out_g << 8) | out_b;
                 }
             });
         }
@@ -173,9 +188,7 @@ fn rasterize_icon(icon_type: IconType, size: u32) -> Option<Vec<u8>> {
 /// XML parses and four vector rasterizations per frame for a set of icons that never
 /// change. The result is cached instead, and only the blend below runs per frame.
 pub fn draw_svg_icon(
-    buffer: &mut [u32],
-    buf_w: usize,
-    buf_h: usize,
+    canvas: &mut Canvas,
     icon_type: IconType,
     start_x: usize,
     start_y: usize,
@@ -204,20 +217,20 @@ pub fn draw_svg_icon(
     let size = target_size_px as usize;
     for y in 0..size {
         let py = start_y + y;
-        if py >= buf_h {
+        if py >= canvas.h {
             break;
         }
         for x in 0..size {
             let px = start_x + x;
-            if px >= buf_w {
+            if px >= canvas.w {
                 break;
             }
             let idx = (y * size + x) * 4;
             let a = data[idx + 3] as f32 / 255.0;
 
             if a > 0.0 {
-                let buf_idx = py * buf_w + px;
-                let bg = buffer[buf_idx];
+                let buf_idx = py * canvas.w + px;
+                let bg = canvas.pixels[buf_idx];
 
                 // `Pixmap` stores premultiplied alpha, so the colour channels already
                 // carry the coverage factor: `src + dst * (1 - a)`, not `src * a + ...`,
@@ -226,7 +239,7 @@ pub fn draw_svg_icon(
                 let out_g = (data[idx + 1] as f32 + ((bg >> 8) & 0xFF) as f32 * (1.0 - a)) as u32;
                 let out_b = (data[idx + 2] as f32 + (bg & 0xFF) as f32 * (1.0 - a)) as u32;
 
-                buffer[buf_idx] = (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
+                canvas.pixels[buf_idx] = (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
             }
         }
     }

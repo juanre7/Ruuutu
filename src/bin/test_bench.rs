@@ -10,24 +10,34 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::WindowId;
 
+// Included wholesale but used in part: each tool needs a slice of the module, and
+// `#[path]` brings in all of it. The unused half is not dead code, it is the rest of
+// the application. Scoped to the include so the tool's own code stays linted.
 #[path = "../capture.rs"]
+#[allow(dead_code)]
 mod capture;
 #[path = "../config.rs"]
+#[allow(dead_code)]
 mod config;
 #[path = "../save_dialog.rs"]
+#[allow(dead_code)]
 mod save_dialog;
 #[path = "../clipboard.rs"]
+#[allow(dead_code)]
 mod clipboard;
 #[path = "../font.rs"]
+#[allow(dead_code)]
 mod font;
 #[path = "../overlay.rs"]
+#[allow(dead_code)]
 mod overlay;
 #[path = "../storage.rs"]
+#[allow(dead_code)]
 mod storage;
 
 use capture::capture_desktop;
 use clipboard::copy_to_clipboard;
-use font::{draw_consolas_bold_text_clipped, draw_svg_icon, measure_consolas_bold_width, IconType};
+use font::{Canvas, draw_consolas_bold_text_clipped, draw_svg_icon, measure_consolas_bold_width, IconType};
 use overlay::{Rect, SaveHint, SelectionOverlay};
 use storage::{encode_image, save_image, OutputFormat, SaveOptions};
 
@@ -242,7 +252,7 @@ fn main() -> Result<()> {
     // -------------------------------------------------------------
     println!("\n--- [SUITE 4: VECTOR SVG ICONS & TEXT CLIPPING] ---");
     let mut pixel_buf = vec![0u32; 100 * 100];
-    draw_svg_icon(&mut pixel_buf, 100, 100, IconType::Clipboard, 10, 10, 20);
+    draw_svg_icon(&mut Canvas::new(&mut pixel_buf, 100, 100), IconType::Clipboard, 10, 10, 20);
     let non_zero_count = pixel_buf.iter().filter(|&&p| p != 0).count();
     assert_test!("Rasterize Lucide Clipboard SVG (Non-zero Pixels)", non_zero_count > 50);
 
@@ -250,7 +260,10 @@ fn main() -> Result<()> {
     assert_test!("Measure Consolas Bold Text Width > 0", text_w > 50);
 
     let mut text_buf = vec![0u32; 200 * 50];
-    draw_consolas_bold_text_clipped(&mut text_buf, 200, 50, "Copiar (C)", 10, 10, 100, 0xFFFFFF, 17.0);
+    draw_consolas_bold_text_clipped(
+        &mut Canvas::new(&mut text_buf, 200, 50),
+        "Copiar (C)", 10, 10, 100, 0xFFFFFF, 17.0,
+    );
     let text_pixels = text_buf.iter().filter(|&&p| p != 0).count();
     assert_test!("Render Clipped Consolas Bold Text", text_pixels > 20);
 

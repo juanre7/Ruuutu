@@ -12,10 +12,14 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
+// Included wholesale but used in part: each tool needs a slice of the module, and
+// `#[path]` brings in all of it. The unused half is not dead code, it is the rest of
+// the application. Scoped to the include so the tool's own code stays linted.
 #[path = "../font.rs"]
+#[allow(dead_code)]
 mod font;
 
-use font::{draw_consolas_bold_text, draw_svg_icon, measure_consolas_bold_width, IconType};
+use font::{Canvas, draw_consolas_bold_text, draw_svg_icon, measure_consolas_bold_width, IconType};
 
 #[derive(Debug, Clone)]
 pub struct TrayMenuTheme {
@@ -63,7 +67,6 @@ struct SliderControl {
     val_min: f32,
     val_max: f32,
     curr_val: f32,
-    category: &'static str,
 }
 
 struct CategoryAccordion {
@@ -150,7 +153,7 @@ impl ApplicationHandler for TrayEditorApp {
                 let mut clicked_slider = None;
                 let mut slider_y = 120;
 
-                for (_cat_idx, cat) in self.categories.iter().enumerate() {
+                for cat in self.categories.iter() {
                     slider_y += 32;
 
                     if cat.collapsed {
@@ -271,16 +274,17 @@ impl TrayEditorApp {
 
         let buf_w = 1040;
         let buf_h = 720;
+        let mut canvas = Canvas::new(&mut buffer, buf_w, buf_h);
 
         // Draw Studio Header
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 0, 0, buf_w, 50, 0x0F172A);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "RUUUTU STUDIO: System Tray Menu Geometry & Margin Inspector", 30, 16, 0x00A2FF, 17.0);
+        draw_filled_rect(&mut canvas, 0, 0, buf_w, 50, 0x0F172A);
+        draw_consolas_bold_text(&mut canvas, "RUUUTU STUDIO: System Tray Menu Geometry & Margin Inspector", 30, 16, 0x00A2FF, 17.0);
 
         // Draw Left Panel Preview Area
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 30, 70, 580, 620, 0x020617);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 30, 70, 580, 620, 0x1E293B);
+        draw_filled_rect(&mut canvas, 30, 70, 580, 620, 0x020617);
+        draw_border_rect(&mut canvas, 30, 70, 580, 620, 0x1E293B);
 
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "LIVE SYSTEM TRAY MENU PREVIEW", 50, 88, 0x94A3B8, 14.0);
+        draw_consolas_bold_text(&mut canvas, "LIVE SYSTEM TRAY MENU PREVIEW", 50, 88, 0x94A3B8, 14.0);
 
         // -------------------------------------------------------------
         // RENDER LIVE SYSTEM TRAY MOCKUP MENU
@@ -303,8 +307,8 @@ impl TrayEditorApp {
         let menu_h = self.theme.menu_padding_y * 2 + total_item_h;
 
         // Menu Card Background
-        draw_filled_rect(&mut buffer, buf_w, buf_h, menu_x, menu_y, menu_w, menu_h, self.theme.menu_bg_color);
-        draw_border_rect(&mut buffer, buf_w, buf_h, menu_x, menu_y, menu_w, menu_h, self.theme.menu_border_color);
+        draw_filled_rect(&mut canvas, menu_x, menu_y, menu_w, menu_h, self.theme.menu_bg_color);
+        draw_border_rect(&mut canvas, menu_x, menu_y, menu_w, menu_h, self.theme.menu_border_color);
 
         let mut curr_item_y = menu_y + self.theme.menu_padding_y;
 
@@ -315,76 +319,76 @@ impl TrayEditorApp {
             let item_h = self.theme.item_height;
 
             if is_hovered {
-                draw_filled_rect(&mut buffer, buf_w, buf_h, item_x, curr_item_y, item_w, item_h, self.theme.item_hover_bg);
-                draw_border_rect(&mut buffer, buf_w, buf_h, item_x, curr_item_y, item_w, item_h, 0x00A2FF);
+                draw_filled_rect(&mut canvas, item_x, curr_item_y, item_w, item_h, self.theme.item_hover_bg);
+                draw_border_rect(&mut canvas, item_x, curr_item_y, item_w, item_h, 0x00A2FF);
             }
 
             // Leading Icon / Margin
             let icon_x = item_x + self.theme.icon_left_margin;
             let icon_y = curr_item_y + (item_h - self.theme.icon_size as usize) / 2;
 
-            draw_svg_icon(&mut buffer, buf_w, buf_h, *icon, icon_x, icon_y, self.theme.icon_size);
+            draw_svg_icon(&mut canvas, *icon, icon_x, icon_y, self.theme.icon_size);
 
             // Label Text
             let text_x = icon_x + self.theme.icon_size as usize + self.theme.icon_text_gap;
             let text_y = curr_item_y + (item_h - self.theme.font_size as usize) / 2;
 
             let col = if is_hovered { 0x00A2FF } else { self.theme.text_color };
-            draw_consolas_bold_text(&mut buffer, buf_w, buf_h, label, text_x, text_y, col, self.theme.font_size);
+            draw_consolas_bold_text(&mut canvas, label, text_x, text_y, col, self.theme.font_size);
 
             // Shortcut / Arrow text on right
             if !shortcut.is_empty() {
                 let sc_w = measure_consolas_bold_width(shortcut, self.theme.font_size - 1.5);
                 let sc_x = (item_x + item_w).saturating_sub(sc_w + 10);
-                draw_consolas_bold_text(&mut buffer, buf_w, buf_h, shortcut, sc_x, text_y + 1, self.theme.shortcut_color, self.theme.font_size - 1.5);
+                draw_consolas_bold_text(&mut canvas, shortcut, sc_x, text_y + 1, self.theme.shortcut_color, self.theme.font_size - 1.5);
             }
 
             // Draw Visual Margin Guidelines in Magenta
-            draw_border_rect(&mut buffer, buf_w, buf_h, icon_x, icon_y, self.theme.icon_size as usize, self.theme.icon_size as usize, 0xFF00FF);
+            draw_border_rect(&mut canvas, icon_x, icon_y, self.theme.icon_size as usize, self.theme.icon_size as usize, 0xFF00FF);
 
             curr_item_y += item_h;
         }
 
         // Draw Telemetry Measurement Box Below Preview
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 50, 480, 540, 140, 0x0B132B);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 50, 480, 540, 140, 0x1E293B);
+        draw_filled_rect(&mut canvas, 50, 480, 540, 140, 0x0B132B);
+        draw_border_rect(&mut canvas, 50, 480, 540, 140, 0x1E293B);
 
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "📐 GEOMETRY MEASUREMENTS", 65, 495, 0x00A2FF, 13.5);
+        draw_consolas_bold_text(&mut canvas, "📐 GEOMETRY MEASUREMENTS", 65, 495, 0x00A2FF, 13.5);
         let m1 = format!("Menu Padding X : {} px  |  Padding Y : {} px", self.theme.menu_padding_x, self.theme.menu_padding_y);
         let m2 = format!("Icon Left Margin: {} px  |  Icon Size : {} px", self.theme.icon_left_margin, self.theme.icon_size);
         let m3 = format!("Icon-Text Gap   : {} px  |  Item Height: {} px", self.theme.icon_text_gap, self.theme.item_height);
 
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &m1, 65, 520, 0xE2E8F0, 12.5);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &m2, 65, 540, 0xE2E8F0, 12.5);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &m3, 65, 560, 0xE2E8F0, 12.5);
+        draw_consolas_bold_text(&mut canvas, &m1, 65, 520, 0xE2E8F0, 12.5);
+        draw_consolas_bold_text(&mut canvas, &m2, 65, 540, 0xE2E8F0, 12.5);
+        draw_consolas_bold_text(&mut canvas, &m3, 65, 560, 0xE2E8F0, 12.5);
 
         // Draw Preset Buttons
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 80, 640, 140, 36, 0x1E293B);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 80, 640, 140, 36, 0x00A2FF);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "Compacto", 110, 650, 0xFFFFFF, 13.0);
+        draw_filled_rect(&mut canvas, 80, 640, 140, 36, 0x1E293B);
+        draw_border_rect(&mut canvas, 80, 640, 140, 36, 0x00A2FF);
+        draw_consolas_bold_text(&mut canvas, "Compacto", 110, 650, 0xFFFFFF, 13.0);
 
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 240, 640, 140, 36, 0x1E293B);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 240, 640, 140, 36, 0x00A2FF);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "Windows 11", 265, 650, 0xFFFFFF, 13.0);
+        draw_filled_rect(&mut canvas, 240, 640, 140, 36, 0x1E293B);
+        draw_border_rect(&mut canvas, 240, 640, 140, 36, 0x00A2FF);
+        draw_consolas_bold_text(&mut canvas, "Windows 11", 265, 650, 0xFFFFFF, 13.0);
 
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 400, 640, 140, 36, 0x1E293B);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 400, 640, 140, 36, 0x00A2FF);
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "Ultra Clean", 425, 650, 0xFFFFFF, 13.0);
+        draw_filled_rect(&mut canvas, 400, 640, 140, 36, 0x1E293B);
+        draw_border_rect(&mut canvas, 400, 640, 140, 36, 0x00A2FF);
+        draw_consolas_bold_text(&mut canvas, "Ultra Clean", 425, 650, 0xFFFFFF, 13.0);
 
         // -------------------------------------------------------------
         // RENDER RIGHT CONTROL PANEL SLIDERS
         // -------------------------------------------------------------
-        draw_filled_rect(&mut buffer, buf_w, buf_h, 630, 70, 380, 620, 0x020617);
-        draw_border_rect(&mut buffer, buf_w, buf_h, 630, 70, 380, 620, 0x1E293B);
+        draw_filled_rect(&mut canvas, 630, 70, 380, 620, 0x020617);
+        draw_border_rect(&mut canvas, 630, 70, 380, 620, 0x1E293B);
 
-        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, "CONTROLES DE MÁRGENES Y GEOMETRÍA", 650, 88, 0xFACC15, 14.0);
+        draw_consolas_bold_text(&mut canvas, "CONTROLES DE MÁRGENES Y GEOMETRÍA", 650, 88, 0xFACC15, 14.0);
 
         let mut slider_y = 120;
-        for (_cat_idx, cat) in self.categories.iter().enumerate() {
+        for cat in self.categories.iter() {
             let cat_icon = if cat.collapsed { "►" } else { "▼" };
             let cat_title = format!("{} {}", cat_icon, cat.name);
-            draw_filled_rect(&mut buffer, buf_w, buf_h, 645, slider_y, 350, 26, 0x0F172A);
-            draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &cat_title, 655, slider_y + 5, 0x38BDF8, 13.0);
+            draw_filled_rect(&mut canvas, 645, slider_y, 350, 26, 0x0F172A);
+            draw_consolas_bold_text(&mut canvas, &cat_title, 655, slider_y + 5, 0x38BDF8, 13.0);
             slider_y += 32;
 
             if cat.collapsed {
@@ -395,27 +399,27 @@ impl TrayEditorApp {
                 let s = &self.sliders[idx];
                 let is_active = self.active_slider == Some(idx);
 
-                draw_consolas_bold_text(&mut buffer, buf_w, buf_h, s.label, 655, slider_y, 0xCBD5E1, 12.0);
+                draw_consolas_bold_text(&mut canvas, s.label, 655, slider_y, 0xCBD5E1, 12.0);
 
                 let val_str = format!("{:.1}", s.curr_val);
-                draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &val_str, 955, slider_y, 0x00A2FF, 12.0);
+                draw_consolas_bold_text(&mut canvas, &val_str, 955, slider_y, 0x00A2FF, 12.0);
 
                 // Slider Track
                 let track_x = 655;
                 let track_y = slider_y + 16;
                 let track_w = 320;
-                draw_filled_rect(&mut buffer, buf_w, buf_h, track_x, track_y, track_w, 4, 0x334155);
+                draw_filled_rect(&mut canvas, track_x, track_y, track_w, 4, 0x334155);
 
                 // Active Fill
                 let fill_pct = ((s.curr_val - s.val_min) / (s.val_max - s.val_min)).clamp(0.0, 1.0);
                 let fill_w = (track_w as f32 * fill_pct) as usize;
                 let fill_col = if is_active { 0x22C55E } else { 0x00A2FF };
-                draw_filled_rect(&mut buffer, buf_w, buf_h, track_x, track_y, fill_w, 4, fill_col);
+                draw_filled_rect(&mut canvas, track_x, track_y, fill_w, 4, fill_col);
 
                 // Thumb Knob
                 let knob_x = track_x + fill_w.saturating_sub(6);
-                draw_filled_rect(&mut buffer, buf_w, buf_h, knob_x, track_y - 4, 12, 12, 0xFFFFFF);
-                draw_border_rect(&mut buffer, buf_w, buf_h, knob_x, track_y - 4, 12, 12, fill_col);
+                draw_filled_rect(&mut canvas, knob_x, track_y - 4, 12, 12, 0xFFFFFF);
+                draw_border_rect(&mut canvas, knob_x, track_y - 4, 12, 12, fill_col);
 
                 slider_y += 38;
             }
@@ -425,26 +429,26 @@ impl TrayEditorApp {
     }
 }
 
-fn draw_filled_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn draw_filled_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for py in y..y2 {
         for px in x..x2 {
-            buffer[py * buf_w + px] = color;
+            canvas.pixels[py * canvas.w + px] = color;
         }
     }
 }
 
-fn draw_border_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn draw_border_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for px in x..x2 {
-        if y < buf_h { buffer[y * buf_w + px] = color; }
-        if y2 > 0 && y2 - 1 < buf_h { buffer[(y2 - 1) * buf_w + px] = color; }
+        if y < canvas.h { canvas.pixels[y * canvas.w + px] = color; }
+        if y2 > 0 && y2 - 1 < canvas.h { canvas.pixels[(y2 - 1) * canvas.w + px] = color; }
     }
     for py in y..y2 {
-        if x < buf_w { buffer[py * buf_w + x] = color; }
-        if x2 > 0 && x2 - 1 < buf_w { buffer[py * buf_w + x2 - 1] = color; }
+        if x < canvas.w { canvas.pixels[py * canvas.w + x] = color; }
+        if x2 > 0 && x2 - 1 < canvas.w { canvas.pixels[py * canvas.w + x2 - 1] = color; }
     }
 }
 
@@ -460,14 +464,14 @@ fn main() -> Result<()> {
     let theme = TrayMenuTheme::default();
 
     let sliders = vec![
-        SliderControl { label: "Menu Padding X (Margen Horizontal)", val_min: 0.0, val_max: 30.0, curr_val: 6.0, category: "Márgenes" },
-        SliderControl { label: "Menu Padding Y (Margen Vertical)", val_min: 0.0, val_max: 30.0, curr_val: 6.0, category: "Márgenes" },
-        SliderControl { label: "Icon Left Margin (Izquierda a Icono)", val_min: 0.0, val_max: 30.0, curr_val: 8.0, category: "Iconos" },
-        SliderControl { label: "Icon Size (Tamaño Icono)", val_min: 10.0, val_max: 32.0, curr_val: 16.0, category: "Iconos" },
-        SliderControl { label: "Icon Text Gap (Distancia Icono-Texto)", val_min: 0.0, val_max: 30.0, curr_val: 10.0, category: "Iconos" },
-        SliderControl { label: "Item Height (Alto de Fila)", val_min: 20.0, val_max: 50.0, curr_val: 30.0, category: "Filas" },
-        SliderControl { label: "Font Size (Tamaño de Texto)", val_min: 10.0, val_max: 20.0, curr_val: 14.0, category: "Filas" },
-        SliderControl { label: "Menu Border Radius (Redondeo)", val_min: 0.0, val_max: 20.0, curr_val: 8.0, category: "Márgenes" },
+        SliderControl { label: "Menu Padding X (Margen Horizontal)", val_min: 0.0, val_max: 30.0, curr_val: 6.0 },
+        SliderControl { label: "Menu Padding Y (Margen Vertical)", val_min: 0.0, val_max: 30.0, curr_val: 6.0 },
+        SliderControl { label: "Icon Left Margin (Izquierda a Icono)", val_min: 0.0, val_max: 30.0, curr_val: 8.0 },
+        SliderControl { label: "Icon Size (Tamaño Icono)", val_min: 10.0, val_max: 32.0, curr_val: 16.0 },
+        SliderControl { label: "Icon Text Gap (Distancia Icono-Texto)", val_min: 0.0, val_max: 30.0, curr_val: 10.0 },
+        SliderControl { label: "Item Height (Alto de Fila)", val_min: 20.0, val_max: 50.0, curr_val: 30.0 },
+        SliderControl { label: "Font Size (Tamaño de Texto)", val_min: 10.0, val_max: 20.0, curr_val: 14.0 },
+        SliderControl { label: "Menu Border Radius (Redondeo)", val_min: 0.0, val_max: 20.0, curr_val: 8.0 },
     ];
 
     let categories = vec![

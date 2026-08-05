@@ -11,10 +11,14 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowAttributes;
 
+// Included wholesale but used in part: each tool needs a slice of the module, and
+// `#[path]` brings in all of it. The unused half is not dead code, it is the rest of
+// the application. Scoped to the include so the tool's own code stays linted.
 #[path = "../font.rs"]
+#[allow(dead_code)]
 mod font;
 
-use font::{draw_consolas_bold_text, draw_svg_icon, measure_consolas_bold_width, IconType};
+use font::{Canvas, draw_consolas_bold_text, draw_svg_icon, measure_consolas_bold_width, IconType};
 
 #[derive(Debug, Clone)]
 struct MarginPreset {
@@ -76,157 +80,153 @@ fn main() -> Result<()> {
     event_loop.run(move |event, elwh: &ActiveEventLoop| {
         elwh.set_control_flow(ControlFlow::Wait);
 
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => elwh.exit(),
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            logical_key,
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => match logical_key {
-                    Key::Named(NamedKey::Escape) => elwh.exit(),
-                    Key::Named(NamedKey::ArrowUp) => {
-                        if selected_id > 1 {
-                            selected_id -= 1;
-                            window.request_redraw();
-                        }
+        if let Event::WindowEvent { event, .. } = event { match event {
+            WindowEvent::CloseRequested => elwh.exit(),
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match logical_key {
+                Key::Named(NamedKey::Escape) => elwh.exit(),
+                Key::Named(NamedKey::ArrowUp) => {
+                    if selected_id > 1 {
+                        selected_id -= 1;
+                        window.request_redraw();
                     }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        if selected_id < presets.len() {
-                            selected_id += 1;
-                            window.request_redraw();
-                        }
-                    }
-                    _ => {}
-                },
-                WindowEvent::MouseInput {
-                    state: ElementState::Pressed,
-                    button: MouseButton::Left,
-                    ..
-                } => {
-                    // Check click location
-                    window.request_redraw();
                 }
-                WindowEvent::RedrawRequested => {
-                    let mut buffer = surface.buffer_mut().unwrap();
-                    let buf_w = width as usize;
-                    let buf_h = height as usize;
-
-                    // Fill background
-                    fill_rect(&mut buffer, buf_w, buf_h, 0, 0, buf_w, buf_h, 0x0F172A);
-
-                    // Header Title
-                    draw_consolas_bold_text(
-                        &mut buffer, buf_w, buf_h,
-                        "RUUUTU - COMPARA LAS 16 COMBINACIONES DE MÁRGENES",
-                        24, 20, 0x38BDF8, 20.0,
-                    );
-                    draw_consolas_bold_text(
-                        &mut buffer, buf_w, buf_h,
-                        "Usa las flechas arriba/abajo o haz clic para seleccionar la opción que prefieras",
-                        24, 48, 0x94A3B8, 14.0,
-                    );
-
-                    let card_h = 50usize;
-                    let start_y = 80usize;
-
-                    for (idx, preset) in presets.iter().enumerate() {
-                        let y = start_y + idx * (card_h + 3);
-                        if y + card_h > buf_h {
-                            break;
-                        }
-
-                        let is_selected = preset.id == selected_id;
-                        let card_bg = if is_selected { 0x1E293B } else { 0x1E293B / 2 };
-                        let border_color = if is_selected { 0x38BDF8 } else { 0x334155 };
-
-                        fill_rect(&mut buffer, buf_w, buf_h, 20, y, buf_w - 40, card_h, card_bg);
-                        draw_border(&mut buffer, buf_w, buf_h, 20, y, buf_w - 40, card_h, border_color);
-
-                        // Preset Number & Name
-                        let title_color = if is_selected { 0xFACC15 } else { 0xE2E8F0 };
-                        let title_text = format!("{:2}. {}", preset.id, preset.name);
-                        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &title_text, 34, y + 16, title_color, 15.0);
-
-                        // Margin specs details
-                        let spec_text = format!(
-                            "Izq:{}px | Gap:{}px | Der:{}px | Vert:{}px | Sep:{}px",
-                            preset.pad_left, preset.icon_gap, preset.pad_right, preset.pad_vert, preset.btn_spacing
-                        );
-                        draw_consolas_bold_text(&mut buffer, buf_w, buf_h, &spec_text, 280, y + 17, 0x94A3B8, 13.0);
-
-                        // Render Live Buttons Preview for this preset!
-                        let btns_x = 680usize;
-                        let btn_h = (icon_size as usize + preset.pad_vert * 2).max(28);
-                        let btn_y = y + (card_h.saturating_sub(btn_h)) / 2;
-
-                        let buttons_data = [
-                            ("Copiar (C)", IconType::Clipboard, 0x16A34A),
-                            ("Guardar (S)", IconType::Save, 0x2563EB),
-                            ("Ambos (Enter)", IconType::Combo, 0x0284C7),
-                            ("Cancelar (Esc)", IconType::Cancel, 0xDC2626),
-                        ];
-
-                        let mut cur_x = btns_x;
-                        for (label, icon_type, bg_col) in buttons_data {
-                            let text_w = measure_consolas_bold_width(label, font_size);
-                            let btn_w = preset.pad_left + icon_size as usize + preset.icon_gap + text_w + preset.pad_right;
-
-                            if cur_x + btn_w > buf_w - 30 {
-                                break;
-                            }
-
-                            // Draw button container
-                            fill_rect(&mut buffer, buf_w, buf_h, cur_x, btn_y, btn_w, btn_h, bg_col);
-
-                            // Draw SVG Icon
-                            let icon_x = cur_x + preset.pad_left;
-                            let icon_y = btn_y + preset.pad_vert;
-                            draw_svg_icon(&mut buffer, buf_w, buf_h, icon_type, icon_x, icon_y, icon_size);
-
-                            // Draw Consolas Bold Mono text
-                            let text_x = icon_x + icon_size as usize + preset.icon_gap;
-                            let text_y = btn_y + preset.pad_vert;
-                            draw_consolas_bold_text(&mut buffer, buf_w, buf_h, label, text_x, text_y, 0xFFFFFF, font_size);
-
-                            cur_x += btn_w + preset.btn_spacing;
-                        }
+                Key::Named(NamedKey::ArrowDown) => {
+                    if selected_id < presets.len() {
+                        selected_id += 1;
+                        window.request_redraw();
                     }
-
-                    buffer.present().unwrap();
                 }
                 _ => {}
             },
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                // Check click location
+                window.request_redraw();
+            }
+            WindowEvent::RedrawRequested => {
+                let mut buffer = surface.buffer_mut().unwrap();
+                let buf_w = width as usize;
+                let buf_h = height as usize;
+                let mut canvas = Canvas::new(&mut buffer, buf_w, buf_h);
+
+                // Fill background
+                fill_rect(&mut canvas, 0, 0, buf_w, buf_h, 0x0F172A);
+
+                // Header Title
+                draw_consolas_bold_text(
+                    &mut canvas, "RUUUTU - COMPARA LAS 16 COMBINACIONES DE MÁRGENES",
+                    24, 20, 0x38BDF8, 20.0,
+                );
+                draw_consolas_bold_text(
+                    &mut canvas, "Usa las flechas arriba/abajo o haz clic para seleccionar la opción que prefieras",
+                    24, 48, 0x94A3B8, 14.0,
+                );
+
+                let card_h = 50usize;
+                let start_y = 80usize;
+
+                for (idx, preset) in presets.iter().enumerate() {
+                    let y = start_y + idx * (card_h + 3);
+                    if y + card_h > buf_h {
+                        break;
+                    }
+
+                    let is_selected = preset.id == selected_id;
+                    let card_bg = if is_selected { 0x1E293B } else { 0x1E293B / 2 };
+                    let border_color = if is_selected { 0x38BDF8 } else { 0x334155 };
+
+                    fill_rect(&mut canvas, 20, y, buf_w - 40, card_h, card_bg);
+                    draw_border(&mut canvas, 20, y, buf_w - 40, card_h, border_color);
+
+                    // Preset Number & Name
+                    let title_color = if is_selected { 0xFACC15 } else { 0xE2E8F0 };
+                    let title_text = format!("{:2}. {}", preset.id, preset.name);
+                    draw_consolas_bold_text(&mut canvas, &title_text, 34, y + 16, title_color, 15.0);
+
+                    // Margin specs details
+                    let spec_text = format!(
+                        "Izq:{}px | Gap:{}px | Der:{}px | Vert:{}px | Sep:{}px",
+                        preset.pad_left, preset.icon_gap, preset.pad_right, preset.pad_vert, preset.btn_spacing
+                    );
+                    draw_consolas_bold_text(&mut canvas, &spec_text, 280, y + 17, 0x94A3B8, 13.0);
+
+                    // Render Live Buttons Preview for this preset!
+                    let btns_x = 680usize;
+                    let btn_h = (icon_size as usize + preset.pad_vert * 2).max(28);
+                    let btn_y = y + (card_h.saturating_sub(btn_h)) / 2;
+
+                    let buttons_data = [
+                        ("Copiar (C)", IconType::Clipboard, 0x16A34A),
+                        ("Guardar (S)", IconType::Save, 0x2563EB),
+                        ("Ambos (Enter)", IconType::Combo, 0x0284C7),
+                        ("Cancelar (Esc)", IconType::Cancel, 0xDC2626),
+                    ];
+
+                    let mut cur_x = btns_x;
+                    for (label, icon_type, bg_col) in buttons_data {
+                        let text_w = measure_consolas_bold_width(label, font_size);
+                        let btn_w = preset.pad_left + icon_size as usize + preset.icon_gap + text_w + preset.pad_right;
+
+                        if cur_x + btn_w > buf_w - 30 {
+                            break;
+                        }
+
+                        // Draw button container
+                        fill_rect(&mut canvas, cur_x, btn_y, btn_w, btn_h, bg_col);
+
+                        // Draw SVG Icon
+                        let icon_x = cur_x + preset.pad_left;
+                        let icon_y = btn_y + preset.pad_vert;
+                        draw_svg_icon(&mut canvas, icon_type, icon_x, icon_y, icon_size);
+
+                        // Draw Consolas Bold Mono text
+                        let text_x = icon_x + icon_size as usize + preset.icon_gap;
+                        let text_y = btn_y + preset.pad_vert;
+                        draw_consolas_bold_text(&mut canvas, label, text_x, text_y, 0xFFFFFF, font_size);
+
+                        cur_x += btn_w + preset.btn_spacing;
+                    }
+                }
+
+                buffer.present().unwrap();
+            }
             _ => {}
-        }
+        } }
     }).map_err(|e| anyhow::anyhow!("Event loop error: {:?}", e))?;
 
     Ok(())
 }
 
-fn fill_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn fill_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for py in y..y2 {
         for px in x..x2 {
-            buffer[py * buf_w + px] = color;
+            canvas.pixels[py * canvas.w + px] = color;
         }
     }
 }
 
-fn draw_border(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn draw_border(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for px in x..x2 {
-        if y < buf_h { buffer[y * buf_w + px] = color; }
-        if y2 > 0 && y2 - 1 < buf_h { buffer[(y2 - 1) * buf_w + px] = color; }
+        if y < canvas.h { canvas.pixels[y * canvas.w + px] = color; }
+        if y2 > 0 && y2 - 1 < canvas.h { canvas.pixels[(y2 - 1) * canvas.w + px] = color; }
     }
     for py in y..y2 {
-        if x < buf_w { buffer[py * buf_w + x] = color; }
-        if x2 > 0 && x2 - 1 < buf_w { buffer[py * buf_w + x2 - 1] = color; }
+        if x < canvas.w { canvas.pixels[py * canvas.w + x] = color; }
+        if x2 > 0 && x2 - 1 < canvas.w { canvas.pixels[py * canvas.w + x2 - 1] = color; }
     }
 }

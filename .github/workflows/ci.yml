@@ -35,9 +35,7 @@ jobs:
       - name: Compilación de release
         run: cargo build --release
 
-      # Informativo, no bloqueante: el árbol arrastra 6 avisos previos (dos `to_*` que toman
-      # `&self` y cuatro funciones con más de 7 argumentos en el código de dibujo). Cuando
-      # estén a cero, añadir `-- -D warnings` para que esto pase a ser una puerta de verdad.
+      # Puerta real: cualquier aviso nuevo tumba el build. Incluye las herramientas de
+      # `devtools`, que comparten los módulos de dibujo con la aplicación.
       - name: Clippy
-        run: cargo clippy --all-targets --features devtools
-        continue-on-error: true
+        run: cargo clippy --all-targets --features devtools -- -D warnings

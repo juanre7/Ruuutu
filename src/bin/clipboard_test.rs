@@ -4,7 +4,11 @@
 use anyhow::Result;
 use image::RgbaImage;
 
+// Included wholesale but used in part: each tool needs a slice of the module, and
+// `#[path]` brings in all of it. The unused half is not dead code, it is the rest of
+// the application. Scoped to the include so the tool's own code stays linted.
 #[path = "../clipboard.rs"]
+#[allow(dead_code)]
 mod clipboard;
 
 use clipboard::copy_to_clipboard;

@@ -13,7 +13,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
-use crate::font::{draw_consolas_bold_text, draw_consolas_bold_text_clipped, draw_svg_icon, measure_consolas_bold_width, IconType};
+use crate::font::{draw_consolas_bold_text, draw_consolas_bold_text_clipped, draw_svg_icon, measure_consolas_bold_width, Canvas, IconType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureAction {
@@ -650,6 +650,12 @@ impl SelectionOverlay {
         }
         buffer.copy_from_slice(&self.bg_buffer);
 
+        // From here on the frame is drawn through the canvas. It borrows `buffer`, so the
+        // raw row loops below go through `canvas.pixels`; the borrow ends at the last draw
+        // and `buffer.present()` gets it back. Only direct field reads of `self` work in
+        // this phase — see the note above about `buffer_mut()` holding `&mut self`.
+        let mut canvas = Canvas::new(&mut buffer, self.total_w as usize, self.total_h as usize);
+
         if let Some(rect) = self.active_rect {
             // Clamped to the capture as well as to the window: the two are the same size
             // in practice, but the row indexing below reads `desktop_img` and writes
@@ -670,22 +676,22 @@ impl SelectionOverlay {
                 let row = (y * self.total_w) as usize;
                 for x in rx1..rx2 {
                     let i = (row + x as usize) * 4;
-                    buffer[row + x as usize] =
+                    canvas.pixels[row + x as usize] =
                         ((src[i] as u32) << 16) | ((src[i + 1] as u32) << 8) | (src[i + 2] as u32);
                 }
             }
 
             let border_color = 0x00A2FF;
             for x in rx1..rx2 {
-                buffer[(ry1 * self.total_w + x) as usize] = border_color;
+                canvas.pixels[(ry1 * self.total_w + x) as usize] = border_color;
                 if ry2 > 0 {
-                    buffer[((ry2 - 1) * self.total_w + x) as usize] = border_color;
+                    canvas.pixels[((ry2 - 1) * self.total_w + x) as usize] = border_color;
                 }
             }
             for y in ry1..ry2 {
-                buffer[(y * self.total_w + rx1) as usize] = border_color;
+                canvas.pixels[(y * self.total_w + rx1) as usize] = border_color;
                 if rx2 > 0 {
-                    buffer[(y * self.total_w + rx2 - 1) as usize] = border_color;
+                    canvas.pixels[(y * self.total_w + rx2 - 1) as usize] = border_color;
                 }
             }
 
@@ -715,12 +721,9 @@ impl SelectionOverlay {
             )
             .max(0) as u32;
 
-            draw_filled_rect(&mut buffer, self.total_w as usize, self.total_h as usize, label_x as usize, label_y as usize, label_w as usize, label_h as usize, 0x1E293B);
+            draw_filled_rect(&mut canvas, label_x as usize, label_y as usize, label_w as usize, label_h as usize, 0x1E293B);
             draw_consolas_bold_text(
-                &mut buffer,
-                self.total_w as usize,
-                self.total_h as usize,
-                &dim_text,
+                &mut canvas, &dim_text,
                 label_x as usize + self.dim_pad_h,
                 label_y as usize + self.dim_pad_v,
                 0xFFFFFF,
@@ -741,10 +744,7 @@ impl SelectionOverlay {
                 let bg_col = if is_hovered { btn.hover_color } else { btn.bg_color };
 
                 draw_filled_rect(
-                    &mut buffer,
-                    self.total_w as usize,
-                    self.total_h as usize,
-                    draw_x,
+                    &mut canvas, draw_x,
                     draw_y,
                     draw_w,
                     draw_h,
@@ -753,7 +753,7 @@ impl SelectionOverlay {
 
                 // If DEBUG MODE: Draw bright magenta border around button hit box!
                 if self.debug_mode {
-                    draw_border_rect(&mut buffer, self.total_w as usize, self.total_h as usize, layout.hit.x.max(0) as usize, layout.hit.y.max(0) as usize, layout.hit.width as usize, layout.hit.height as usize, 0xFF00FF);
+                    draw_border_rect(&mut canvas, layout.hit.x.max(0) as usize, layout.hit.y.max(0) as usize, layout.hit.width as usize, layout.hit.height as usize, 0xFF00FF);
                 }
 
                 let expanded_w = expanded_button_w(btn, self.font_size, self.pad_l, self.icon_gap, self.pad_r);
@@ -765,10 +765,7 @@ impl SelectionOverlay {
                 let icon_x = (draw_x as f32 + anim_icon_offset_x).max(0.0) as usize;
                 let icon_center_y = (draw_y as f32 + (draw_h as f32 - btn.icon_size as f32) / 2.0).max(0.0) as usize;
                 draw_svg_icon(
-                    &mut buffer,
-                    self.total_w as usize,
-                    self.total_h as usize,
-                    btn.icon,
+                    &mut canvas, btn.icon,
                     icon_x,
                     icon_center_y,
                     btn.icon_size,
@@ -780,10 +777,7 @@ impl SelectionOverlay {
 
                 if max_text_x > text_x && t_expand > 0.05 {
                     draw_consolas_bold_text_clipped(
-                        &mut buffer,
-                        self.total_w as usize,
-                        self.total_h as usize,
-                        btn.label,
+                        &mut canvas, btn.label,
                         text_x,
                         text_y,
                         max_text_x,
@@ -798,19 +792,19 @@ impl SelectionOverlay {
         if self.debug_mode {
             let hud_w = 480usize;
             let hud_h = 115usize;
-            draw_filled_rect(&mut buffer, self.total_w as usize, self.total_h as usize, 20, 20, hud_w, hud_h, 0x020617);
-            draw_border_rect(&mut buffer, self.total_w as usize, self.total_h as usize, 20, 20, hud_w, hud_h, 0x22C55E);
+            draw_filled_rect(&mut canvas, 20, 20, hud_w, hud_h, 0x020617);
+            draw_border_rect(&mut canvas, 20, 20, hud_w, hud_h, 0x22C55E);
 
-            draw_consolas_bold_text(&mut buffer, self.total_w as usize, self.total_h as usize, "[DEBUG MODE ACTIVE]", 30, 26, 0x22C55E, 14.0);
+            draw_consolas_bold_text(&mut canvas, "[DEBUG MODE ACTIVE]", 30, 26, 0x22C55E, 14.0);
             
             let pos_str = format!("Cursor: ({}, {}) | Mode: {:?}", self.current_pos.0, self.current_pos.1, self.mode);
-            draw_consolas_bold_text(&mut buffer, self.total_w as usize, self.total_h as usize, &pos_str, 30, 48, 0xFACC15, 12.5);
+            draw_consolas_bold_text(&mut canvas, &pos_str, 30, 48, 0xFACC15, 12.5);
 
             let btn_str = format!("ShowButtons: {} | HoveredBtn: {:?}", self.show_buttons, self.hovered_button);
-            draw_consolas_bold_text(&mut buffer, self.total_w as usize, self.total_h as usize, &btn_str, 30, 68, 0x38BDF8, 12.5);
+            draw_consolas_bold_text(&mut canvas, &btn_str, 30, 68, 0x38BDF8, 12.5);
 
             let click_hint = "Haz clic en [Copiar] para ver telemetria en consola!";
-            draw_consolas_bold_text(&mut buffer, self.total_w as usize, self.total_h as usize, click_hint, 30, 88, 0xE2E8F0, 12.0);
+            draw_consolas_bold_text(&mut canvas, click_hint, 30, 88, 0xE2E8F0, 12.0);
         }
 
         if let Err(e) = buffer.present() {
@@ -904,26 +898,26 @@ fn expanded_button_w(btn: &Button, font_size: f32, pad_l: usize, icon_gap: usize
     (pad_l + btn.icon_size as usize + icon_gap + text_w + pad_r) as f32
 }
 
-fn draw_filled_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn draw_filled_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for py in y..y2 {
         for px in x..x2 {
-            buffer[py * buf_w + px] = color;
+            canvas.pixels[py * canvas.w + px] = color;
         }
     }
 }
 
-fn draw_border_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
-    let x2 = (x + w).min(buf_w);
-    let y2 = (y + h).min(buf_h);
+fn draw_border_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let x2 = (x + w).min(canvas.w);
+    let y2 = (y + h).min(canvas.h);
     for px in x..x2 {
-        if y < buf_h { buffer[y * buf_w + px] = color; }
-        if y2 > 0 && y2 - 1 < buf_h { buffer[(y2 - 1) * buf_w + px] = color; }
+        if y < canvas.h { canvas.pixels[y * canvas.w + px] = color; }
+        if y2 > 0 && y2 - 1 < canvas.h { canvas.pixels[(y2 - 1) * canvas.w + px] = color; }
     }
     for py in y..y2 {
-        if x < buf_w { buffer[py * buf_w + x] = color; }
-        if x2 > 0 && x2 - 1 < buf_w { buffer[py * buf_w + x2 - 1] = color; }
+        if x < canvas.w { canvas.pixels[py * canvas.w + x] = color; }
+        if x2 > 0 && x2 - 1 < canvas.w { canvas.pixels[py * canvas.w + x2 - 1] = color; }
     }
 }
 

@@ -54,7 +54,7 @@ impl ImageFormatChoice {
         }
     }
 
-    pub fn to_output_format(&self) -> OutputFormat {
+    pub fn to_output_format(self) -> OutputFormat {
         match self {
             ImageFormatChoice::WebP => OutputFormat::WebP,
             ImageFormatChoice::Png => OutputFormat::Png,
@@ -146,7 +146,7 @@ impl QualityChoice {
     }
 
     /// Lossy quality for WebP and JPEG.
-    pub fn to_percentage(&self) -> u8 {
+    pub fn to_percentage(self) -> u8 {
         match self {
             QualityChoice::Max => 100,
             QualityChoice::High => 90,
