@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 // GUI subsystem: double-clicking ruuutu.exe goes straight to the tray without flashing a
 // console window. `console::attach_parent_console()` reattaches stdout/stderr when the binary
 // *is* launched from a terminal, so `cargo run` and `ruuutu.exe --debug` still print.
@@ -34,7 +37,7 @@ mod tray;
 
 use capture::capture_desktop;
 use clipboard::copy_to_clipboard;
-use config::{set_autostart_enabled, AppConfig, HotkeyPreset, ImageFormatChoice, QualityChoice, ScaleChoice};
+use config::{set_autostart_enabled, AppConfig};
 use hotkey::{HotkeyManager, PRTSCN_TRIGGERED};
 use overlay::{CaptureAction, SaveHint, SelectionOverlay};
 use storage::save_image;
@@ -189,96 +192,42 @@ impl ApplicationHandler for RuuutuApp {
                             eprintln!("Error starting capture flow: {:?}", e);
                         }
                         break;
-                    // Changing the format changes what the quality submenu means,
-                    // so the tray is rebuilt instead of just re-checking items.
-                    } else if event.id == tray.fmt_webp.id() {
-                        self.config.format = ImageFormatChoice::WebP;
+                    // One branch per settings group, not per option: the tray owns the
+                    // id -> value table for each submenu. Adding an option is adding a
+                    // variant to its `ALL` list in `config.rs`; nothing here changes.
+                    //
+                    // None of these rebuild the tray. Only the format needs more than a
+                    // re-check, because the quality wording depends on it, and that is
+                    // what `refresh_for_format` does in place.
+                    } else if let Some(format) = tray.format_choice(&event.id) {
+                        self.config.format = format;
                         let _ = self.config.save();
-                        self.tray_mgr = SystemTray::new(&self.config).ok();
-                        println!("[CONFIG] Selected format: WebP");
-                    } else if event.id == tray.fmt_png.id() {
-                        self.config.format = ImageFormatChoice::Png;
-                        let _ = self.config.save();
-                        self.tray_mgr = SystemTray::new(&self.config).ok();
-                        println!("[CONFIG] Selected format: PNG");
-                    } else if event.id == tray.fmt_jpeg.id() {
-                        self.config.format = ImageFormatChoice::Jpeg;
-                        let _ = self.config.save();
-                        self.tray_mgr = SystemTray::new(&self.config).ok();
-                        println!("[CONFIG] Selected format: JPEG");
-                    } else if event.id == tray.q_max.id() {
-                        self.config.quality = QualityChoice::Max;
+                        tray.refresh_for_format(format);
+                        tray.update_checks(&self.config);
+                        println!("[CONFIG] Selected format: {}", format.display_name());
+                    } else if let Some(quality) = tray.quality_choice(&event.id) {
+                        self.config.quality = quality;
                         let _ = self.config.save();
                         tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected quality: Max (100%)");
-                    } else if event.id == tray.q_high.id() {
-                        self.config.quality = QualityChoice::High;
+                        println!("[CONFIG] Selected quality: {}", quality.label_for(self.config.format));
+                    } else if let Some(scale) = tray.scale_choice(&event.id) {
+                        self.config.scale = scale;
                         let _ = self.config.save();
                         tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected quality: High (90%)");
-                    } else if event.id == tray.q_medium.id() {
-                        self.config.quality = QualityChoice::Medium;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected quality: Medium (75%)");
-                    } else if event.id == tray.q_low.id() {
-                        self.config.quality = QualityChoice::Low;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected quality: Low (50%)");
-                    } else if event.id == tray.sc_full.id() {
-                        self.config.scale = ScaleChoice::Full;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Save scale: 100% (original)");
-                    } else if event.id == tray.sc_75.id() {
-                        self.config.scale = ScaleChoice::P75;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Save scale: 75%");
-                    } else if event.id == tray.sc_50.id() {
-                        self.config.scale = ScaleChoice::P50;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Save scale: 50%");
-                    } else if event.id == tray.sc_25.id() {
-                        self.config.scale = ScaleChoice::P25;
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Save scale: 25%");
-                    // Six options behind one branch: the tray owns the id -> value table.
+                        println!("[CONFIG] Save scale: {}%", scale.percent());
                     // Takes effect on the next capture, since the overlay is built fresh
-                    // each time, and the menu labels do not depend on it, so re-checking
-                    // is enough — no tray rebuild.
-                    } else if let Some(choice) = tray.text_scale_choice(&event.id) {
-                        self.config.text_scale = choice;
+                    // each time.
+                    } else if let Some(text_scale) = tray.text_scale_choice(&event.id) {
+                        self.config.text_scale = text_scale;
                         let _ = self.config.save();
                         tray.update_checks(&self.config);
-                        println!("[CONFIG] Overlay text scale: {}%", choice.percent());
-                    } else if event.id == tray.hk_prtscn_alta.id() {
-                        self.config.hotkey = HotkeyPreset::PrtScnAltA;
-                        if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(self.config.hotkey); }
+                        println!("[CONFIG] Overlay text scale: {}%", text_scale.percent());
+                    } else if let Some(hotkey) = tray.hotkey_choice(&event.id) {
+                        self.config.hotkey = hotkey;
+                        if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(hotkey); }
                         let _ = self.config.save();
                         tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected hotkey: PrtScn / Alt + A");
-                    } else if event.id == tray.hk_ctrl_shift_s.id() {
-                        self.config.hotkey = HotkeyPreset::CtrlShiftS;
-                        if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(self.config.hotkey); }
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected hotkey: Ctrl + Shift + S");
-                    } else if event.id == tray.hk_alt_prtscn.id() {
-                        self.config.hotkey = HotkeyPreset::AltPrtScn;
-                        if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(self.config.hotkey); }
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected hotkey: Alt + PrtScn");
-                    } else if event.id == tray.hk_shift_prtscn.id() {
-                        self.config.hotkey = HotkeyPreset::ShiftPrtScn;
-                        if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(self.config.hotkey); }
-                        let _ = self.config.save();
-                        tray.update_checks(&self.config);
-                        println!("[CONFIG] Selected hotkey: Shift + PrtScn");
+                        println!("[CONFIG] Selected hotkey: {}", hotkey.label());
                     } else if event.id == tray.chk_autostart.id() {
                         let new_autostart = !self.config.autostart;
                         self.config.autostart = new_autostart;
@@ -293,7 +242,8 @@ impl ApplicationHandler for RuuutuApp {
                             let _ = mgr.set_preset(self.config.hotkey);
                         }
                         let _ = self.config.save();
-                        self.tray_mgr = SystemTray::new(&self.config).ok();
+                        tray.refresh_for_format(self.config.format);
+                        tray.update_checks(&self.config);
                         println!("[CONFIG] Restored default settings!");
                     } else if event.id == tray.menu_folder.id() {
                         if let Ok(dir) = storage::get_screenshots_dir() {

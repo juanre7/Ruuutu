@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 use anyhow::{Context, Result};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -5,36 +8,77 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use crate::config::{AppConfig, HotkeyPreset, ImageFormatChoice, QualityChoice, ScaleChoice, TextScaleChoice};
 use crate::icon::icon_rgba;
 
+/// One radio-style group of the tray menu: the check items, paired with the value each
+/// one selects.
+///
+/// Every settings submenu has this exact shape — a list of mutually exclusive options
+/// differing only in their value — so they are all built, re-checked and dispatched
+/// through the same three methods instead of one struct field and one `else if` branch
+/// per option.
+struct MenuGroup<T: Copy + PartialEq> {
+    items: Vec<(CheckMenuItem, T)>,
+}
+
+impl<T: Copy + PartialEq> MenuGroup<T> {
+    /// Builds the submenu and its items, checking whichever one matches `current`.
+    fn new(
+        title: &str,
+        values: &[T],
+        label: impl Fn(T) -> &'static str,
+        current: T,
+    ) -> (Submenu, Self) {
+        let submenu = Submenu::new(title, true);
+        let items: Vec<(CheckMenuItem, T)> = values
+            .iter()
+            .map(|&value| {
+                let item = CheckMenuItem::new(label(value), true, value == current, None);
+                let _ = submenu.append(&item);
+                (item, value)
+            })
+            .collect();
+
+        (submenu, Self { items })
+    }
+
+    /// The value a menu id selects, if the id belongs to this group.
+    fn choice(&self, id: &MenuId) -> Option<T> {
+        self.items
+            .iter()
+            .find(|(item, _)| item.id() == id)
+            .map(|(_, value)| *value)
+    }
+
+    /// Moves the check mark to `current`.
+    fn set_checked(&self, current: T) {
+        for (item, value) in &self.items {
+            item.set_checked(*value == current);
+        }
+    }
+
+    /// Rewrites every label in place. Used only by the quality group, whose wording
+    /// depends on the active format.
+    fn relabel(&self, label: impl Fn(T) -> &'static str) {
+        for (item, value) in &self.items {
+            item.set_text(label(*value));
+        }
+    }
+}
+
 pub struct SystemTray {
     _tray_icon: TrayIcon,
     pub menu_capture: MenuItem,
     pub menu_folder: MenuItem,
     pub menu_reset: MenuItem,
     pub menu_quit: MenuItem,
-    // Format options
-    pub fmt_webp: CheckMenuItem,
-    pub fmt_png: CheckMenuItem,
-    pub fmt_jpeg: CheckMenuItem,
-    // Quality options (labels depend on the active format)
-    pub q_max: CheckMenuItem,
-    pub q_high: CheckMenuItem,
-    pub q_medium: CheckMenuItem,
-    pub q_low: CheckMenuItem,
-    // Save scale options
-    pub sc_full: CheckMenuItem,
-    pub sc_75: CheckMenuItem,
-    pub sc_50: CheckMenuItem,
-    pub sc_25: CheckMenuItem,
-    /// Overlay interface scale, kept as a table rather than one field per option: the six
-    /// entries differ only in their value, and `main.rs` dispatches them through
-    /// [`SystemTray::text_scale_choice`] instead of six more branches in its menu chain.
-    text_scales: Vec<(CheckMenuItem, TextScaleChoice)>,
-    // Hotkey options
-    pub hk_prtscn_alta: CheckMenuItem,
-    pub hk_ctrl_shift_s: CheckMenuItem,
-    pub hk_alt_prtscn: CheckMenuItem,
-    pub hk_shift_prtscn: CheckMenuItem,
-    // Autostart
+    formats: MenuGroup<ImageFormatChoice>,
+    qualities: MenuGroup<QualityChoice>,
+    /// Kept because its title names the active format ("Calidad (WebP)" /
+    /// "Nivel de Compresión (PNG)") and has to be rewritten along with the items.
+    quality_submenu: Submenu,
+    scales: MenuGroup<ScaleChoice>,
+    text_scales: MenuGroup<TextScaleChoice>,
+    hotkeys: MenuGroup<HotkeyPreset>,
+    // Autostart is a lone toggle, not a group.
     pub chk_autostart: CheckMenuItem,
 }
 
@@ -45,62 +89,43 @@ impl SystemTray {
         let menu_reset = MenuItem::new("🔄 Restaurar Ajustes por Defecto", true, None);
         let menu_quit = MenuItem::new("❌ Salir de Ruuutu", true, None);
 
-        // Submenu Formato
-        let fmt_webp = CheckMenuItem::new("WebP (Recomendado)", true, cfg.format == ImageFormatChoice::WebP, None);
-        let fmt_png = CheckMenuItem::new("PNG (Alta fidelidad)", true, cfg.format == ImageFormatChoice::Png, None);
-        let fmt_jpeg = CheckMenuItem::new("JPEG (Ligero)", true, cfg.format == ImageFormatChoice::Jpeg, None);
+        let (format_submenu, formats) = MenuGroup::new(
+            "🎨 Formato de Imagen",
+            &ImageFormatChoice::ALL,
+            |f| f.menu_label(),
+            cfg.format,
+        );
 
-        let format_submenu = Submenu::new("🎨 Formato de Imagen", true);
-        let _ = format_submenu.append(&fmt_webp);
-        let _ = format_submenu.append(&fmt_png);
-        let _ = format_submenu.append(&fmt_jpeg);
+        // Calidad / Compresión: the wording depends on what the active format can
+        // actually do, which is why this group gets relabelled in `refresh_for_format`.
+        // Both paths read `label_for`, so there is no second copy of the wording.
+        let (quality_submenu, qualities) = MenuGroup::new(
+            cfg.format.quality_menu_title(),
+            &QualityChoice::ALL,
+            |q| q.label_for(cfg.format),
+            cfg.quality,
+        );
 
-        // Submenu Calidad / Compresión: wording depends on what the format can actually do.
-        let q_max = CheckMenuItem::new(QualityChoice::Max.label_for(cfg.format), true, cfg.quality == QualityChoice::Max, None);
-        let q_high = CheckMenuItem::new(QualityChoice::High.label_for(cfg.format), true, cfg.quality == QualityChoice::High, None);
-        let q_medium = CheckMenuItem::new(QualityChoice::Medium.label_for(cfg.format), true, cfg.quality == QualityChoice::Medium, None);
-        let q_low = CheckMenuItem::new(QualityChoice::Low.label_for(cfg.format), true, cfg.quality == QualityChoice::Low, None);
+        let (scale_submenu, scales) = MenuGroup::new(
+            "📐 Escala de Guardado",
+            &ScaleChoice::ALL,
+            |s| s.label(),
+            cfg.scale,
+        );
 
-        let quality_submenu = Submenu::new(cfg.format.quality_menu_title(), true);
-        let _ = quality_submenu.append(&q_max);
-        let _ = quality_submenu.append(&q_high);
-        let _ = quality_submenu.append(&q_medium);
-        let _ = quality_submenu.append(&q_low);
+        let (text_scale_submenu, text_scales) = MenuGroup::new(
+            "🔠 Escala del Texto (captura)",
+            &TextScaleChoice::ALL,
+            |t| t.label(),
+            cfg.text_scale,
+        );
 
-        // Submenu Escala de guardado
-        let sc_full = CheckMenuItem::new(ScaleChoice::Full.label(), true, cfg.scale == ScaleChoice::Full, None);
-        let sc_75 = CheckMenuItem::new(ScaleChoice::P75.label(), true, cfg.scale == ScaleChoice::P75, None);
-        let sc_50 = CheckMenuItem::new(ScaleChoice::P50.label(), true, cfg.scale == ScaleChoice::P50, None);
-        let sc_25 = CheckMenuItem::new(ScaleChoice::P25.label(), true, cfg.scale == ScaleChoice::P25, None);
-
-        let scale_submenu = Submenu::new("📐 Escala de Guardado", true);
-        let _ = scale_submenu.append(&sc_full);
-        let _ = scale_submenu.append(&sc_75);
-        let _ = scale_submenu.append(&sc_50);
-        let _ = scale_submenu.append(&sc_25);
-
-        // Submenu Escala del texto del overlay
-        let text_scales: Vec<(CheckMenuItem, TextScaleChoice)> = TextScaleChoice::ALL
-            .into_iter()
-            .map(|c| (CheckMenuItem::new(c.label(), true, cfg.text_scale == c, None), c))
-            .collect();
-
-        let text_scale_submenu = Submenu::new("🔠 Escala del Texto (captura)", true);
-        for (item, _) in &text_scales {
-            let _ = text_scale_submenu.append(item);
-        }
-
-        // Submenu Atajo de Teclado
-        let hk_prtscn_alta = CheckMenuItem::new("PrtScn / Alt + A", true, cfg.hotkey == HotkeyPreset::PrtScnAltA, None);
-        let hk_ctrl_shift_s = CheckMenuItem::new("Ctrl + Shift + S", true, cfg.hotkey == HotkeyPreset::CtrlShiftS, None);
-        let hk_alt_prtscn = CheckMenuItem::new("Alt + PrtScn", true, cfg.hotkey == HotkeyPreset::AltPrtScn, None);
-        let hk_shift_prtscn = CheckMenuItem::new("Shift + PrtScn", true, cfg.hotkey == HotkeyPreset::ShiftPrtScn, None);
-
-        let hotkey_submenu = Submenu::new("⌨️ Atajo de Teclado", true);
-        let _ = hotkey_submenu.append(&hk_prtscn_alta);
-        let _ = hotkey_submenu.append(&hk_ctrl_shift_s);
-        let _ = hotkey_submenu.append(&hk_alt_prtscn);
-        let _ = hotkey_submenu.append(&hk_shift_prtscn);
+        let (hotkey_submenu, hotkeys) = MenuGroup::new(
+            "⌨️ Atajo de Teclado",
+            &HotkeyPreset::ALL,
+            |h| h.label(),
+            cfg.hotkey,
+        );
 
         // Checkbox Autostart
         let chk_autostart = CheckMenuItem::new("🚀 Iniciar con Windows", true, cfg.autostart, None);
@@ -139,58 +164,57 @@ impl SystemTray {
             menu_folder,
             menu_reset,
             menu_quit,
-            fmt_webp,
-            fmt_png,
-            fmt_jpeg,
-            q_max,
-            q_high,
-            q_medium,
-            q_low,
-            sc_full,
-            sc_75,
-            sc_50,
-            sc_25,
+            formats,
+            qualities,
+            quality_submenu,
+            scales,
             text_scales,
-            hk_prtscn_alta,
-            hk_ctrl_shift_s,
-            hk_alt_prtscn,
-            hk_shift_prtscn,
+            hotkeys,
             chk_autostart,
         })
     }
 
-    /// The overlay scale a menu id belongs to, if any.
+    /// The setting a menu id selects, if the id belongs to that group. `main.rs`
+    /// dispatches the whole menu through these instead of one branch per option.
+    pub fn format_choice(&self, id: &MenuId) -> Option<ImageFormatChoice> {
+        self.formats.choice(id)
+    }
+
+    pub fn quality_choice(&self, id: &MenuId) -> Option<QualityChoice> {
+        self.qualities.choice(id)
+    }
+
+    pub fn scale_choice(&self, id: &MenuId) -> Option<ScaleChoice> {
+        self.scales.choice(id)
+    }
+
     pub fn text_scale_choice(&self, id: &MenuId) -> Option<TextScaleChoice> {
-        self.text_scales
-            .iter()
-            .find(|(item, _)| item.id() == id)
-            .map(|(_, choice)| *choice)
+        self.text_scales.choice(id)
+    }
+
+    pub fn hotkey_choice(&self, id: &MenuId) -> Option<HotkeyPreset> {
+        self.hotkeys.choice(id)
+    }
+
+    /// Rewrites the quality group for a newly selected format: "Sin pérdidas (VP8L)"
+    /// becomes "Máxima (nivel 9, más lento)" for PNG, and the submenu title follows.
+    ///
+    /// This exists so changing the format does **not** rebuild the whole `SystemTray`.
+    /// A rebuild creates a new hidden window and a new `Shell_NotifyIconW` uID, so the
+    /// shell sees a different notification-area icon rather than the same one updated,
+    /// and whether it keeps the user's visibility preference across that is undocumented
+    /// and differs between Windows 10 and 11. Relabelling in place depends on none of it.
+    pub fn refresh_for_format(&self, format: ImageFormatChoice) {
+        self.qualities.relabel(|q| q.label_for(format));
+        self.quality_submenu.set_text(format.quality_menu_title());
     }
 
     pub fn update_checks(&self, cfg: &AppConfig) {
-        self.fmt_webp.set_checked(cfg.format == ImageFormatChoice::WebP);
-        self.fmt_png.set_checked(cfg.format == ImageFormatChoice::Png);
-        self.fmt_jpeg.set_checked(cfg.format == ImageFormatChoice::Jpeg);
-
-        self.q_max.set_checked(cfg.quality == QualityChoice::Max);
-        self.q_high.set_checked(cfg.quality == QualityChoice::High);
-        self.q_medium.set_checked(cfg.quality == QualityChoice::Medium);
-        self.q_low.set_checked(cfg.quality == QualityChoice::Low);
-
-        self.sc_full.set_checked(cfg.scale == ScaleChoice::Full);
-        self.sc_75.set_checked(cfg.scale == ScaleChoice::P75);
-        self.sc_50.set_checked(cfg.scale == ScaleChoice::P50);
-        self.sc_25.set_checked(cfg.scale == ScaleChoice::P25);
-
-        for (item, choice) in &self.text_scales {
-            item.set_checked(cfg.text_scale == *choice);
-        }
-
-        self.hk_prtscn_alta.set_checked(cfg.hotkey == HotkeyPreset::PrtScnAltA);
-        self.hk_ctrl_shift_s.set_checked(cfg.hotkey == HotkeyPreset::CtrlShiftS);
-        self.hk_alt_prtscn.set_checked(cfg.hotkey == HotkeyPreset::AltPrtScn);
-        self.hk_shift_prtscn.set_checked(cfg.hotkey == HotkeyPreset::ShiftPrtScn);
-
+        self.formats.set_checked(cfg.format);
+        self.qualities.set_checked(cfg.quality);
+        self.scales.set_checked(cfg.scale);
+        self.text_scales.set_checked(cfg.text_scale);
+        self.hotkeys.set_checked(cfg.hotkey);
         self.chk_autostart.set_checked(cfg.autostart);
     }
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 juanre7
+
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +15,14 @@ pub enum ImageFormatChoice {
 }
 
 impl ImageFormatChoice {
+    /// Every variant, in menu order. A new variant has to be added here or it simply
+    /// never appears in the tray; the compiler cannot catch the omission.
+    pub const ALL: [ImageFormatChoice; 3] = [
+        ImageFormatChoice::WebP,
+        ImageFormatChoice::Png,
+        ImageFormatChoice::Jpeg,
+    ];
+
     /// Token written to and read from `config.json`.
     ///
     /// Both halves of the persistence go through this pair instead of `{:?}`: the
@@ -78,6 +89,16 @@ impl ImageFormatChoice {
         }
     }
 
+    /// Tray menu label. Lives here, next to the enum, like every other setting's
+    /// wording, so `tray.rs` never spells an option out by hand.
+    pub fn menu_label(&self) -> &'static str {
+        match self {
+            ImageFormatChoice::WebP => "WebP (Recomendado)",
+            ImageFormatChoice::Png => "PNG (Alta fidelidad)",
+            ImageFormatChoice::Jpeg => "JPEG (Ligero)",
+        }
+    }
+
     /// PNG is always lossless, so its slider controls compression effort, not quality.
     pub fn quality_menu_title(&self) -> &'static str {
         match self {
@@ -97,6 +118,14 @@ pub enum QualityChoice {
 }
 
 impl QualityChoice {
+    /// Every variant, in menu order. See [`ImageFormatChoice::ALL`].
+    pub const ALL: [QualityChoice; 4] = [
+        QualityChoice::Max,
+        QualityChoice::High,
+        QualityChoice::Medium,
+        QualityChoice::Low,
+    ];
+
     fn config_key(&self) -> &'static str {
         match self {
             QualityChoice::Max => "Max",
@@ -186,6 +215,14 @@ pub enum ScaleChoice {
 }
 
 impl ScaleChoice {
+    /// Every variant, in menu order. See [`ImageFormatChoice::ALL`].
+    pub const ALL: [ScaleChoice; 4] = [
+        ScaleChoice::Full,
+        ScaleChoice::P75,
+        ScaleChoice::P50,
+        ScaleChoice::P25,
+    ];
+
     /// The scale is stored as its bare percentage, so the key is numeric.
     fn from_config_key(key: &str) -> Option<Self> {
         match key {
@@ -299,6 +336,24 @@ pub enum HotkeyPreset {
 }
 
 impl HotkeyPreset {
+    /// Every variant, in menu order. See [`ImageFormatChoice::ALL`].
+    pub const ALL: [HotkeyPreset; 4] = [
+        HotkeyPreset::PrtScnAltA,
+        HotkeyPreset::CtrlShiftS,
+        HotkeyPreset::AltPrtScn,
+        HotkeyPreset::ShiftPrtScn,
+    ];
+
+    /// Tray menu label. See [`ImageFormatChoice::menu_label`].
+    pub fn label(&self) -> &'static str {
+        match self {
+            HotkeyPreset::PrtScnAltA => "PrtScn / Alt + A",
+            HotkeyPreset::CtrlShiftS => "Ctrl + Shift + S",
+            HotkeyPreset::AltPrtScn => "Alt + PrtScn",
+            HotkeyPreset::ShiftPrtScn => "Shift + PrtScn",
+        }
+    }
+
     fn config_key(&self) -> &'static str {
         match self {
             HotkeyPreset::PrtScnAltA => "PrtScnAltA",
@@ -521,40 +576,19 @@ pub fn set_autostart_enabled(enable: bool) -> Result<()> {
 mod tests {
     use super::*;
 
-    const FORMATS: [ImageFormatChoice; 3] = [
-        ImageFormatChoice::WebP,
-        ImageFormatChoice::Png,
-        ImageFormatChoice::Jpeg,
-    ];
-    const QUALITIES: [QualityChoice; 4] = [
-        QualityChoice::Max,
-        QualityChoice::High,
-        QualityChoice::Medium,
-        QualityChoice::Low,
-    ];
-    const SCALES: [ScaleChoice; 4] = [
-        ScaleChoice::Full,
-        ScaleChoice::P75,
-        ScaleChoice::P50,
-        ScaleChoice::P25,
-    ];
-    const HOTKEYS: [HotkeyPreset; 4] = [
-        HotkeyPreset::PrtScnAltA,
-        HotkeyPreset::CtrlShiftS,
-        HotkeyPreset::AltPrtScn,
-        HotkeyPreset::ShiftPrtScn,
-    ];
-
     /// Every combination must survive a write/read cycle. The PNG and JPEG cases
     /// are the regression: the writer emitted `Png` while the reader looked for
     /// `PNG`, so both formats silently reverted to WebP on restart.
+    ///
+    /// Driven off the `ALL` tables the tray menu is built from, so a variant added
+    /// there is covered here without touching this test.
     #[test]
     fn every_setting_survives_a_round_trip() {
-        for format in FORMATS {
-            for quality in QUALITIES {
-                for scale in SCALES {
+        for format in ImageFormatChoice::ALL {
+            for quality in QualityChoice::ALL {
+                for scale in ScaleChoice::ALL {
                     for text_scale in TextScaleChoice::ALL {
-                        for hotkey in HOTKEYS {
+                        for hotkey in HotkeyPreset::ALL {
                             let cfg = AppConfig { format, quality, scale, text_scale, hotkey, autostart: false };
                             let json = cfg.to_json();
                             let parsed = AppConfig::from_json(&json);
@@ -574,7 +608,7 @@ mod tests {
     /// the other, so they are the pair most likely to be read into each other.
     #[test]
     fn image_scale_and_text_scale_stay_independent() {
-        for scale in SCALES {
+        for scale in ScaleChoice::ALL {
             for text_scale in TextScaleChoice::ALL {
                 let cfg = AppConfig { scale, text_scale, ..AppConfig::default() };
                 let parsed = AppConfig::from_json(&cfg.to_json());
@@ -636,6 +670,58 @@ mod tests {
         assert_eq!(cfg.hotkey, HotkeyPreset::AltPrtScn);
     }
 
+    /// The tray builds each submenu by mapping a variant to its label, so two
+    /// variants sharing a label would render as two identical, indistinguishable
+    /// menu entries.
+    #[test]
+    fn menu_labels_are_present_and_distinct_within_each_group() {
+        fn check<T: Copy>(values: &[T], label: impl Fn(T) -> &'static str) {
+            let labels: Vec<&str> = values.iter().map(|v| label(*v)).collect();
+            for l in &labels {
+                assert!(!l.trim().is_empty(), "empty menu label");
+            }
+            for (i, a) in labels.iter().enumerate() {
+                for b in &labels[i + 1..] {
+                    assert_ne!(a, b, "two variants share the menu label {:?}", a);
+                }
+            }
+        }
+
+        check(&ImageFormatChoice::ALL, |f| f.menu_label());
+        check(&ScaleChoice::ALL, |s| s.label());
+        check(&TextScaleChoice::ALL, |t| t.label());
+        check(&HotkeyPreset::ALL, |h| h.label());
+        for format in ImageFormatChoice::ALL {
+            check(&QualityChoice::ALL, move |q| q.label_for(format));
+            check(&QualityChoice::ALL, move |q| q.short_label_for(format));
+        }
+    }
+
+    /// The reason the quality submenu is relabelled when the format changes: the
+    /// same `Max` means three different things, and the menu has to say so.
+    #[test]
+    fn max_quality_reads_differently_per_format() {
+        let labels: Vec<&str> = ImageFormatChoice::ALL
+            .iter()
+            .map(|f| QualityChoice::Max.label_for(*f))
+            .collect();
+        for (i, a) in labels.iter().enumerate() {
+            for b in &labels[i + 1..] {
+                assert_ne!(a, b, "Max reads the same for two formats: {:?}", a);
+            }
+        }
+
+        let titles: Vec<&str> = ImageFormatChoice::ALL
+            .iter()
+            .map(|f| f.quality_menu_title())
+            .collect();
+        for (i, a) in titles.iter().enumerate() {
+            for b in &titles[i + 1..] {
+                assert_ne!(a, b, "two formats share a quality submenu title: {:?}", a);
+            }
+        }
+    }
+
     #[test]
     fn json_field_reads_strings_numbers_and_booleans() {
         let doc = r#"{"a": "text", "b": 42, "c": true}"#;
@@ -648,8 +734,8 @@ mod tests {
     /// WebP is the only format that can choose, and only at maximum quality.
     #[test]
     fn lossless_is_webp_at_max_only() {
-        for format in FORMATS {
-            for quality in QUALITIES {
+        for format in ImageFormatChoice::ALL {
+            for quality in QualityChoice::ALL {
                 let cfg = AppConfig { format, quality, ..AppConfig::default() };
                 let expected =
                     format == ImageFormatChoice::WebP && quality == QualityChoice::Max;
