@@ -321,19 +321,6 @@ impl SelectionOverlay {
         self.window.id()
     }
 
-    /// The row's top edge, before each button's own hover lift is applied.
-    ///
-    /// Normally sits under the selection; flips above it when the selection reaches the
-    /// bottom of the screen and the row would not fit.
-    fn buttons_row_y(&self, rect: Rect) -> i32 {
-        let below = rect.y + rect.height as i32 + self.btn_gap_y as i32;
-        if below + self.base_button_h as i32 > self.total_h as i32 {
-            (rect.y - self.base_button_h as i32 - self.btn_gap_y as i32).max(6)
-        } else {
-            below
-        }
-    }
-
     /// Where each button is laid out for one frame.
     fn button_layouts(&self) -> Option<Vec<ButtonLayout>> {
         let rect = self.active_rect?;
@@ -341,7 +328,7 @@ impl SelectionOverlay {
             return None;
         }
 
-        let row_y = self.buttons_row_y(rect);
+        let row_y = buttons_row_y(rect, self.base_button_h, self.btn_gap_y, self.total_h);
 
         // The hit box spans the whole vertical travel of the lift, so it is the same box
         // whatever the animation is doing. A box that moved with the lift would shrink
@@ -352,7 +339,7 @@ impl SelectionOverlay {
         let hit_h = self.base_button_h as u32 + lift_span;
 
         let total_btns_w: f32 = self.anim_states.iter().map(|s| s.curr_w + self.btn_spacing as f32).sum::<f32>() - self.btn_spacing as f32;
-        let mut cur_btn_x = (rect.x + rect.width as i32) as f32 - total_btns_w;
+        let mut cur_btn_x = buttons_row_x(rect.x + rect.width as i32, total_btns_w, self.total_w);
         let mut list = Vec::with_capacity(self.buttons_def.len());
 
         for idx in 0..self.buttons_def.len() {
@@ -826,6 +813,37 @@ impl SelectionOverlay {
     }
 }
 
+/// Left edge of the button row.
+///
+/// The row hangs off the **right** edge of the selection, so a selection that is narrower
+/// than the row and sits near the left of the screen pushes it off-screen. It is slid back
+/// inside rather than left to overflow.
+///
+/// This has to happen to the row as a whole. Clamping each button's own draw position was
+/// the bug: every button with a negative x was pinned to 0 and they were all painted on
+/// top of each other. Handling it here also means the hit boxes move with the drawn ones,
+/// since both come out of `button_layouts`.
+///
+/// A row wider than the whole screen — not reachable with four buttons, but cheap to
+/// define — starts at 0 and overflows to the right.
+fn buttons_row_x(selection_right: i32, row_w: f32, total_w: u32) -> f32 {
+    let max_start = (total_w as f32 - row_w).max(0.0);
+    (selection_right as f32 - row_w).clamp(0.0, max_start)
+}
+
+/// Top edge of the button row, before each button's own hover lift.
+///
+/// Normally sits under the selection; flips above it when the selection reaches the
+/// bottom of the screen and the row would not fit below.
+fn buttons_row_y(rect: Rect, button_h: usize, gap: usize, total_h: u32) -> i32 {
+    let below = rect.y + rect.height as i32 + gap as i32;
+    if below + button_h as i32 > total_h as i32 {
+        (rect.y - button_h as i32 - gap as i32).max(6)
+    } else {
+        below
+    }
+}
+
 /// Width a button needs once its label is showing: padding, icon, gap, text, padding.
 fn expanded_button_w(btn: &Button, font_size: f32, pad_l: usize, icon_gap: usize, pad_r: usize) -> f32 {
     let text_w = measure_consolas_bold_width(btn.label, font_size);
@@ -991,6 +1009,86 @@ mod tests {
                     "hit box misses the drawn box at {}x with lift {}", s, lift);
             }
         }
+    }
+
+    /// Width of the row when every button is at rest, which is its narrowest.
+    fn resting_row_w(m: &OverlayMetrics) -> f32 {
+        4.0 * m.base_button_h as f32 + 3.0 * m.btn_spacing as f32
+    }
+
+    /// The reported bug: at 2x, a small selection near the left edge pushed the
+    /// right-anchored row off-screen, every button was clamped to x = 0 on its own, and
+    /// they were all painted on top of each other.
+    #[test]
+    fn a_narrow_selection_on_the_left_does_not_push_the_row_off_screen() {
+        for s in SCALES {
+            let m = OverlayMetrics::new(s);
+            let row_w = resting_row_w(&m);
+
+            // Selection 100 px wide hard against the left edge.
+            let x = buttons_row_x(100, row_w, 1920);
+            assert!(x >= 0.0, "row starts off-screen at {}x: {}", s, x);
+            assert!(x + row_w <= 1920.0, "row overflows to the right at {}x", s);
+        }
+    }
+
+    /// Sliding the row back must not disturb the ordinary case: while it fits, the row
+    /// stays anchored to the right edge of the selection.
+    #[test]
+    fn the_row_stays_anchored_to_the_selection_when_it_fits() {
+        let m = OverlayMetrics::new(1.0);
+        let row_w = resting_row_w(&m);
+
+        for selection_right in [500, 900, 1400, 1920] {
+            let x = buttons_row_x(selection_right, row_w, 1920);
+            assert_eq!(x, selection_right as f32 - row_w, "row moved when it did not need to");
+        }
+    }
+
+    /// Buttons are laid out left to right from the row origin, so none may start before
+    /// the one before it ends. This is what "overlapping" meant.
+    #[test]
+    fn buttons_never_overlap_wherever_the_row_lands() {
+        for s in SCALES {
+            let m = OverlayMetrics::new(s);
+            let widths = [m.base_button_h as f32; 4];
+            let row_w = resting_row_w(&m);
+
+            for selection_right in [50, 100, 300, 960, 1920] {
+                let mut x = buttons_row_x(selection_right, row_w, 1920);
+                let mut prev_end = f32::NEG_INFINITY;
+                for w in widths {
+                    assert!(x >= prev_end, "buttons overlap at {}x, selection right {}", s, selection_right);
+                    prev_end = x + w;
+                    x += w + m.btn_spacing as f32;
+                }
+            }
+        }
+    }
+
+    /// A row wider than the screen has nowhere to go: it starts at 0 rather than at a
+    /// negative offset.
+    #[test]
+    fn a_row_wider_than_the_screen_starts_at_zero() {
+        assert_eq!(buttons_row_x(1920, 2500.0, 1920), 0.0);
+        assert_eq!(buttons_row_x(10, 2500.0, 1920), 0.0);
+    }
+
+    /// The row drops below the selection, and flips above it when there is no room.
+    #[test]
+    fn the_row_flips_above_a_selection_at_the_bottom() {
+        let m = OverlayMetrics::new(1.0);
+        let h = m.base_button_h;
+        let gap = m.btn_gap_y;
+
+        let roomy = Rect { x: 0, y: 100, width: 200, height: 200 };
+        assert_eq!(buttons_row_y(roomy, h, gap, 1080), 300 + gap as i32);
+
+        // Selection running to the bottom edge: the row has to go above it.
+        let tight = Rect { x: 0, y: 100, width: 200, height: 980 };
+        let y = buttons_row_y(tight, h, gap, 1080);
+        assert!(y < 100, "row should sit above the selection, got {}", y);
+        assert!(y >= 6, "row should stay on screen, got {}", y);
     }
 
     /// Crop must never read outside the capture, whatever rectangle it is handed.
