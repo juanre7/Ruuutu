@@ -92,17 +92,13 @@ fn main() -> Result<()> {
                 ..
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => elwh.exit(),
-                Key::Named(NamedKey::ArrowUp) => {
-                    if selected_id > 1 {
-                        selected_id -= 1;
-                        window.request_redraw();
-                    }
+                Key::Named(NamedKey::ArrowUp) if selected_id > 1 => {
+                    selected_id -= 1;
+                    window.request_redraw();
                 }
-                Key::Named(NamedKey::ArrowDown) => {
-                    if selected_id < presets.len() {
-                        selected_id += 1;
-                        window.request_redraw();
-                    }
+                Key::Named(NamedKey::ArrowDown) if selected_id < presets.len() => {
+                    selected_id += 1;
+                    window.request_redraw();
                 }
                 _ => {}
             },
