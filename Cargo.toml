@@ -1,0 +1,81 @@
+[package]
+name = "ruuutu"
+version = "0.1.0"
+edition = "2021"
+default-run = "ruuutu"
+build = "build.rs"
+
+[[bin]]
+name = "ruuutu"
+path = "src/main.rs"
+
+[[bin]]
+name = "font_preview"
+path = "src/bin/font_preview.rs"
+
+[[bin]]
+name = "margin_preview"
+path = "src/bin/margin_preview.rs"
+
+[[bin]]
+name = "margin_editor"
+path = "src/bin/margin_editor.rs"
+
+[[bin]]
+name = "tray_editor"
+path = "src/bin/tray_editor.rs"
+
+[[bin]]
+name = "clipboard_test"
+path = "src/bin/clipboard_test.rs"
+
+[[bin]]
+name = "test_bench"
+path = "src/bin/test_bench.rs"
+
+[dependencies]
+anyhow = "1.0"
+ab_glyph = "0.2"
+resvg = "0.44"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# libwebp real: el encoder WebP de `image` es solo VP8L sin pérdidas (sin parámetro de calidad).
+webp = { version = "0.3", default-features = false }
+
+arboard = "3.4"
+winit = "0.30"
+softbuffer = "0.4"
+global-hotkey = "0.6"
+tray-icon = "0.19"
+dirs = "5.0"
+chrono = "0.4"
+
+windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell_Common"] }
+windows-core = "0.62"
+
+# Solo en tiempo de compilación: rasterizan e incrustan el icono del .exe. No entran en el binario.
+[build-dependencies]
+embed-resource = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_System_Console",
+    "Win32_Storage_FileSystem",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
