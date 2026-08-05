@@ -38,7 +38,7 @@ impl ApplicationHandler for TestRigApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let test_desktop = RgbaImage::new(800, 600);
         let hint = SaveHint { scale_percent: 50, format_name: "WEBP" };
-        if let Ok(overlay) = SelectionOverlay::new(event_loop, test_desktop, 0, 0, 800, 600, true, hint) {
+        if let Ok(overlay) = SelectionOverlay::new(event_loop, test_desktop, 0, 0, 800, 600, true, hint, 1.0) {
             self.overlay = Some(overlay);
         }
     }

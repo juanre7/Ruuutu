@@ -246,6 +246,15 @@ impl ApplicationHandler for RuuutuApp {
                         let _ = self.config.save();
                         tray.update_checks(&self.config);
                         println!("[CONFIG] Save scale: 25%");
+                    // Six options behind one branch: the tray owns the id -> value table.
+                    // Takes effect on the next capture, since the overlay is built fresh
+                    // each time, and the menu labels do not depend on it, so re-checking
+                    // is enough — no tray rebuild.
+                    } else if let Some(choice) = tray.text_scale_choice(&event.id) {
+                        self.config.text_scale = choice;
+                        let _ = self.config.save();
+                        tray.update_checks(&self.config);
+                        println!("[CONFIG] Overlay text scale: {}%", choice.percent());
                     } else if event.id == tray.hk_prtscn_alta.id() {
                         self.config.hotkey = HotkeyPreset::PrtScnAltA;
                         if let Some(ref mut mgr) = self.hotkey_mgr { let _ = mgr.set_preset(self.config.hotkey); }
@@ -411,7 +420,17 @@ impl RuuutuApp {
             format_name: self.config.format.display_name(),
         };
 
-        let overlay = SelectionOverlay::new(event_loop, desktop_img, min_x, min_y, total_w, total_h, self.debug_mode, hint)?;
+        let overlay = SelectionOverlay::new(
+            event_loop,
+            desktop_img,
+            min_x,
+            min_y,
+            total_w,
+            total_h,
+            self.debug_mode,
+            hint,
+            self.config.text_scale.factor(),
+        )?;
         self.overlay = Some(overlay);
         Ok(())
     }

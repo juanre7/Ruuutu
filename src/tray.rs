@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::config::{AppConfig, HotkeyPreset, ImageFormatChoice, QualityChoice, ScaleChoice};
+use crate::config::{AppConfig, HotkeyPreset, ImageFormatChoice, QualityChoice, ScaleChoice, TextScaleChoice};
 use crate::icon::icon_rgba;
 
 pub struct SystemTray {
@@ -25,6 +25,10 @@ pub struct SystemTray {
     pub sc_75: CheckMenuItem,
     pub sc_50: CheckMenuItem,
     pub sc_25: CheckMenuItem,
+    /// Overlay interface scale, kept as a table rather than one field per option: the six
+    /// entries differ only in their value, and `main.rs` dispatches them through
+    /// [`SystemTray::text_scale_choice`] instead of six more branches in its menu chain.
+    text_scales: Vec<(CheckMenuItem, TextScaleChoice)>,
     // Hotkey options
     pub hk_prtscn_alta: CheckMenuItem,
     pub hk_ctrl_shift_s: CheckMenuItem,
@@ -75,6 +79,17 @@ impl SystemTray {
         let _ = scale_submenu.append(&sc_50);
         let _ = scale_submenu.append(&sc_25);
 
+        // Submenu Escala del texto del overlay
+        let text_scales: Vec<(CheckMenuItem, TextScaleChoice)> = TextScaleChoice::ALL
+            .into_iter()
+            .map(|c| (CheckMenuItem::new(c.label(), true, cfg.text_scale == c, None), c))
+            .collect();
+
+        let text_scale_submenu = Submenu::new("🔠 Escala del Texto (captura)", true);
+        for (item, _) in &text_scales {
+            let _ = text_scale_submenu.append(item);
+        }
+
         // Submenu Atajo de Teclado
         let hk_prtscn_alta = CheckMenuItem::new("PrtScn / Alt + A", true, cfg.hotkey == HotkeyPreset::PrtScnAltA, None);
         let hk_ctrl_shift_s = CheckMenuItem::new("Ctrl + Shift + S", true, cfg.hotkey == HotkeyPreset::CtrlShiftS, None);
@@ -99,6 +114,7 @@ impl SystemTray {
         let _ = menu.append(&format_submenu);
         let _ = menu.append(&quality_submenu);
         let _ = menu.append(&scale_submenu);
+        let _ = menu.append(&text_scale_submenu);
         let _ = menu.append(&hotkey_submenu);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&chk_autostart);
@@ -134,12 +150,21 @@ impl SystemTray {
             sc_75,
             sc_50,
             sc_25,
+            text_scales,
             hk_prtscn_alta,
             hk_ctrl_shift_s,
             hk_alt_prtscn,
             hk_shift_prtscn,
             chk_autostart,
         })
+    }
+
+    /// The overlay scale a menu id belongs to, if any.
+    pub fn text_scale_choice(&self, id: &MenuId) -> Option<TextScaleChoice> {
+        self.text_scales
+            .iter()
+            .find(|(item, _)| item.id() == id)
+            .map(|(_, choice)| *choice)
     }
 
     pub fn update_checks(&self, cfg: &AppConfig) {
@@ -156,6 +181,10 @@ impl SystemTray {
         self.sc_75.set_checked(cfg.scale == ScaleChoice::P75);
         self.sc_50.set_checked(cfg.scale == ScaleChoice::P50);
         self.sc_25.set_checked(cfg.scale == ScaleChoice::P25);
+
+        for (item, choice) in &self.text_scales {
+            item.set_checked(cfg.text_scale == *choice);
+        }
 
         self.hk_prtscn_alta.set_checked(cfg.hotkey == HotkeyPreset::PrtScnAltA);
         self.hk_ctrl_shift_s.set_checked(cfg.hotkey == HotkeyPreset::CtrlShiftS);

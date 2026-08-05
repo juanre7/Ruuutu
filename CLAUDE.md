@@ -25,8 +25,9 @@ cargo check                            # comprobación rápida de compilación
 cargo clippy --all-targets
 ```
 
-Los tests automatizados cubren solo la lógica pura que no necesita escritorio (de momento, la
-persistencia de `config.rs`). El resto de la suite es un binario interactivo:
+Los tests automatizados cubren la lógica pura que no necesita escritorio: la persistencia de
+`config.rs` y la geometría de `overlay.rs` (`OverlayMetrics`, `crop_image`, `Rect`). El resto de la
+suite es un binario interactivo:
 
 ```bash
 cargo test --bin ruuutu                # tests unitarios, sin sesión gráfica
@@ -101,6 +102,16 @@ evento de ratón de una ventana viva cuelga la aplicación. Ver regla 2 de `AGEN
   Los dos bucles que recorren la captura (fondo atenuado en `new`, selección sin atenuar en `redraw`)
   usan `as_raw()` por filas, no `get_pixel`: son 2 M de llamadas con comprobación de límites en 1080p y
   8 M en 4K, y el primero está en el camino entre pulsar el atajo y ver el overlay.
+
+  **`OverlayMetrics::new(text_scale)` concentra toda la aritmética de escalado** y es pura, sin ventana,
+  para poder testearla sin sesión gráfica. Cada medida es el diseño 1x multiplicado por la escala del
+  usuario, redondeado y con suelo en 1 px (a 0,5x varios paddings caerían a 0). No escala solo la fuente:
+  las cajas que contienen el texto crecen con él, o el texto se recortaría contra un botón de 34 px fijos.
+  `hover_delay_ms` y `anim_speed` no escalan — son tiempos, no geometría.
+
+  Si añades una medida nueva al overlay, va en `OverlayMetrics`, no como constante suelta, y el test
+  `one_x_matches_the_original_design` es la red que garantiza que 1x sigue siendo el diseño afinado a
+  mano en `margin_editor`.
 - `font.rs` — rasterizado de texto con `ab_glyph` leyendo Consolas Bold directamente de `C:\Windows\Fonts`
   (con fallback a consolas/segoeuib), e iconos Lucide SVG embebidos rasterizados con `resvg` y compuestos
   con alpha sobre el buffer. Sin assets externos: el binario no incrusta fuentes.
@@ -149,7 +160,12 @@ evento de ratón de una ventana viva cuelga la aplicación. Ver regla 2 de `AGEN
   ocuparía un BMP de 256×256) y lo incrusta con `embed-resource`. Las dependencias `embed-resource` e
   `image` son de `[build-dependencies]`: no entran en el binario.
 - `tray.rs` — icono de bandeja (de `icon.rs`, 32×32 RGBA) y menú con submenús de
-  formato/calidad/hotkey.
+  formato/calidad/escala/escala de texto/hotkey.
+
+  El submenú de escala del texto **no tiene un campo por opción**: es una tabla
+  `Vec<(CheckMenuItem, TextScaleChoice)>` y `text_scale_choice(id)` resuelve el id del menú al valor,
+  así que `main.rs` lo despacha en **una** rama en lugar de seis. Ese es el patrón a seguir para
+  cualquier grupo de opciones homogéneo que se añada; ver la nota sobre la cadena `else if` más abajo.
 
   `compact_menu_gutter()` aplica `MNS_CHECKORBMP` (vía `SetMenuInfo` + `MIM_APPLYTOSUBMENUS`) al popup
   raíz. Win32 reserva por defecto **dos** columnas a la izquierda de cada ítem, una para la marca de
@@ -214,6 +230,11 @@ reconstruye el `SystemTray` entero** en vez de solo remarcar los checks: las eti
 `ScaleChoice` (100/75/50/25 %) reescala con Lanczos3 **antes** de codificar, y es la única palanca que
 reduce el tamaño de un PNG de verdad. Se aplica por igual al fichero guardado y al portapapeles.
 
+**No confundir con `TextScaleChoice`** (0,5x a 2x), que solo cambia el tamaño de la interfaz del overlay
+y no toca ni un píxel de la imagen guardada. Son dos ajustes distintos, en dos submenús distintos y bajo
+dos claves distintas del JSON (`scale` y `text_scale`); hay un test dedicado a que no se lean el uno al
+otro, porque un nombre de clave contiene al otro.
+
 El reescalado ocurre **una sola vez**, en `about_to_wait` justo antes de bifurcar por acción: se resamplea
 la selección, se pasan los mismos píxeles al encoder y al portapapeles, y se fuerza
 `opts.scale_percent = 100` para que `encode_image` no vuelva a escalar. Si añades otra ruta de salida,
@@ -242,7 +263,8 @@ con el formato configurado; `Copiar (C)` solo va al portapapeles; `Esc` cancela 
   multimonitor, donde son ~100 MB. El pilar de "<10 MB" es **en reposo**, y ahí se cumple (10,7 MB).
 - **La cadena de ~20 ramas `else if` del menú en `main.rs` se queda.** No hay ningún bug detrás; es riesgo
   futuro, porque cada opción nueva son cinco líneas copiadas y la posibilidad de olvidar el `set_checked`
-  o el `save()`. Convertirla en tabla cuando toque añadir un ajuste, no antes.
+  o el `save()`. Los grupos nuevos no la alargan: la escala del texto entró como tabla en `tray.rs` con
+  una sola rama de despacho. Convertir las ramas existentes cuando haya otro motivo para tocarlas.
 
 ## Restricciones que no se rompen (de AGENTS.md)
 

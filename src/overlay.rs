@@ -87,6 +87,60 @@ struct AnimatedButtonState {
     hover_enter_time: Option<Instant>,
 }
 
+/// The overlay's pixel metrics at a given interface scale.
+///
+/// Pure and window-free on purpose: it is the whole of the scaling arithmetic, so it can
+/// be unit tested without a desktop session. Everything here is the 1x design multiplied
+/// by the user's text scale — the glyphs cannot grow alone, they would clip against a
+/// fixed 34 px button, so the boxes that hold the text scale with it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OverlayMetrics {
+    font_size: f32,
+    hover_lift_y: f32,
+    icon_size: u32,
+    pad_l: usize,
+    icon_gap: usize,
+    pad_r: usize,
+    pad_v: usize,
+    btn_spacing: usize,
+    btn_gap_y: usize,
+    dim_pad_h: usize,
+    dim_pad_v: usize,
+    min_dim_label_h: usize,
+    base_button_h: usize,
+}
+
+impl OverlayMetrics {
+    /// `text_scale` is a multiplier; anything outside 0.5x..=2x is clamped, so a corrupt
+    /// config cannot produce a zero-sized or absurd interface.
+    fn new(text_scale: f32) -> Self {
+        let s = if text_scale.is_finite() { text_scale.clamp(0.5, 2.0) } else { 1.0 };
+        // Rounded, then floored at 1: at 0.5x several of these would otherwise land on 0
+        // and collapse the padding entirely.
+        let px = |v: f32| ((v * s).round() as usize).max(1);
+
+        let icon_size = ((20.0 * s).round() as u32).max(1);
+        let pad_v = px(7.0);
+
+        Self {
+            font_size: 17.0 * s,
+            hover_lift_y: -2.0 * s,
+            icon_size,
+            pad_l: px(8.0),
+            icon_gap: px(6.0),
+            pad_r: px(10.0),
+            pad_v,
+            btn_spacing: px(6.0),
+            btn_gap_y: px(6.0),
+            dim_pad_h: px(10.0),
+            dim_pad_v: px(6.0),
+            min_dim_label_h: px(24.0),
+            // Tall enough for the icon with its padding, never below the scaled minimum.
+            base_button_h: (icon_size as usize + pad_v * 2).max(px(34.0)),
+        }
+    }
+}
+
 /// One button's geometry for a frame, produced by [`SelectionOverlay::button_layouts`].
 ///
 /// **The single source of truth for the button row.** Painting, hover and click all read
@@ -143,6 +197,8 @@ pub struct SelectionOverlay {
     btn_gap_y: usize,
     dim_pad_h: usize,
     dim_pad_v: usize,
+    /// Floor for the dimension label's height, so small text still gets a readable chip.
+    min_dim_label_h: usize,
     base_button_h: usize,
     square_w: f32,
 }
@@ -158,6 +214,7 @@ impl SelectionOverlay {
         total_h: u32,
         debug_mode: bool,
         hint: SaveHint,
+        text_scale: f32,
     ) -> Result<Self> {
         let desktop_img = Arc::new(desktop_img);
 
@@ -201,16 +258,16 @@ impl SelectionOverlay {
         // length; padding here keeps a mismatched capture from panicking every frame.
         bg_buffer.resize((total_w * total_h) as usize, 0);
 
+        let m = OverlayMetrics::new(text_scale);
+
         let buttons_def = vec![
-            Button { label: "Copiar (C)",       action: CaptureAction::CopyOnly,    icon: IconType::Clipboard, icon_size: 20, bg_color: 0x16A34A, hover_color: 0x22C55E },
-            Button { label: "Guardar (S)",      action: CaptureAction::SaveOnly,    icon: IconType::Save,      icon_size: 20, bg_color: 0x2563EB, hover_color: 0x3B82F6 },
-            Button { label: "Ambos (Enter)",    action: CaptureAction::SaveAndCopy, icon: IconType::Combo,     icon_size: 20, bg_color: 0x0284C7, hover_color: 0x38BDF8 },
-            Button { label: "Cancelar (Esc)",   action: CaptureAction::Cancel,      icon: IconType::Cancel,    icon_size: 20, bg_color: 0xDC2626, hover_color: 0xEF4444 },
+            Button { label: "Copiar (C)",       action: CaptureAction::CopyOnly,    icon: IconType::Clipboard, icon_size: m.icon_size, bg_color: 0x16A34A, hover_color: 0x22C55E },
+            Button { label: "Guardar (S)",      action: CaptureAction::SaveOnly,    icon: IconType::Save,      icon_size: m.icon_size, bg_color: 0x2563EB, hover_color: 0x3B82F6 },
+            Button { label: "Ambos (Enter)",    action: CaptureAction::SaveAndCopy, icon: IconType::Combo,     icon_size: m.icon_size, bg_color: 0x0284C7, hover_color: 0x38BDF8 },
+            Button { label: "Cancelar (Esc)",   action: CaptureAction::Cancel,      icon: IconType::Cancel,    icon_size: m.icon_size, bg_color: 0xDC2626, hover_color: 0xEF4444 },
         ];
 
-        let pad_v = 7usize;
-        let base_button_h = (20usize + pad_v * 2).max(34);
-        let square_w = base_button_h as f32;
+        let square_w = m.base_button_h as f32;
 
         let anim_states = vec![
             AnimatedButtonState { curr_w: square_w, target_w: square_w, curr_lift_y: 0.0, target_lift_y: 0.0, hover_enter_time: None };
@@ -241,19 +298,21 @@ impl SelectionOverlay {
             finished: false,
             debug_mode,
             hint,
-            font_size: 17.0,
+            font_size: m.font_size,
+            // Timing, not geometry: the hover delay and the easing rate stay put.
             hover_delay_ms: 500,
             anim_speed: 0.20,
-            hover_lift_y: -2.0,
-            pad_l: 8,
-            icon_gap: 6,
-            pad_r: 10,
-            pad_v,
-            btn_spacing: 6,
-            btn_gap_y: 6,
-            dim_pad_h: 10,
-            dim_pad_v: 6,
-            base_button_h,
+            hover_lift_y: m.hover_lift_y,
+            pad_l: m.pad_l,
+            icon_gap: m.icon_gap,
+            pad_r: m.pad_r,
+            pad_v: m.pad_v,
+            btn_spacing: m.btn_spacing,
+            btn_gap_y: m.btn_gap_y,
+            dim_pad_h: m.dim_pad_h,
+            dim_pad_v: m.dim_pad_v,
+            min_dim_label_h: m.min_dim_label_h,
+            base_button_h: m.base_button_h,
             square_w,
         })
     }
@@ -653,7 +712,7 @@ impl SelectionOverlay {
                 )
             };
             let label_w = (measure_consolas_bold_width(&dim_text, self.font_size) + self.dim_pad_h * 2) as u32;
-            let label_h = (self.font_size as usize + self.dim_pad_v * 2).max(24) as u32;
+            let label_h = (self.font_size as usize + self.dim_pad_v * 2).max(self.min_dim_label_h) as u32;
             let label_x = rx1;
             let label_y = if ry1 >= label_h + 6 { ry1 - label_h - 6 } else { ry1 + 6 };
 
@@ -829,4 +888,132 @@ fn crop_image(img: &RgbaImage, x: i32, y: i32, width: u32, height: u32) -> RgbaI
         }
     }
     cropped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scales offered by the tray menu.
+    const SCALES: [f32; 6] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+    /// 1x must still be the interface that was hand-tuned in `margin_editor`.
+    #[test]
+    fn one_x_matches_the_original_design() {
+        let m = OverlayMetrics::new(1.0);
+        assert_eq!(m.font_size, 17.0);
+        assert_eq!(m.hover_lift_y, -2.0);
+        assert_eq!(m.icon_size, 20);
+        assert_eq!(m.pad_l, 8);
+        assert_eq!(m.icon_gap, 6);
+        assert_eq!(m.pad_r, 10);
+        assert_eq!(m.pad_v, 7);
+        assert_eq!(m.btn_spacing, 6);
+        assert_eq!(m.btn_gap_y, 6);
+        assert_eq!(m.dim_pad_h, 10);
+        assert_eq!(m.dim_pad_v, 6);
+        assert_eq!(m.min_dim_label_h, 24);
+        assert_eq!(m.base_button_h, 34);
+    }
+
+    /// The text is drawn at `draw_y + pad_v` and is about `font_size` tall, so this is
+    /// what keeps a scaled label inside its button instead of spilling over the edge.
+    #[test]
+    fn the_label_fits_inside_the_button_at_every_scale() {
+        for s in SCALES {
+            let m = OverlayMetrics::new(s);
+            assert!(
+                m.font_size.ceil() as usize + m.pad_v <= m.base_button_h,
+                "text overflows the button at {}x: {} + {} > {}",
+                s, m.font_size, m.pad_v, m.base_button_h
+            );
+            assert!(
+                m.icon_size as usize + m.pad_v * 2 <= m.base_button_h,
+                "icon overflows the button at {}x", s
+            );
+        }
+    }
+
+    /// No metric may collapse to zero, which is what a naive truncation would do to the
+    /// paddings at 0.5x and would silently glue the icon to the button edge.
+    #[test]
+    fn no_metric_collapses_at_the_smallest_scale() {
+        let m = OverlayMetrics::new(0.5);
+        for (name, v) in [
+            ("pad_l", m.pad_l), ("icon_gap", m.icon_gap), ("pad_r", m.pad_r),
+            ("pad_v", m.pad_v), ("btn_spacing", m.btn_spacing), ("btn_gap_y", m.btn_gap_y),
+            ("dim_pad_h", m.dim_pad_h), ("dim_pad_v", m.dim_pad_v),
+            ("min_dim_label_h", m.min_dim_label_h), ("base_button_h", m.base_button_h),
+        ] {
+            assert!(v >= 1, "{} collapsed to {} at 0.5x", name, v);
+        }
+        assert!(m.icon_size >= 1);
+        assert!(m.font_size > 0.0);
+    }
+
+    #[test]
+    fn metrics_grow_monotonically_with_the_scale() {
+        let mut prev = OverlayMetrics::new(SCALES[0]);
+        for s in &SCALES[1..] {
+            let m = OverlayMetrics::new(*s);
+            assert!(m.font_size > prev.font_size, "font_size shrank at {}x", s);
+            assert!(m.base_button_h >= prev.base_button_h, "button height shrank at {}x", s);
+            assert!(m.icon_size >= prev.icon_size, "icon shrank at {}x", s);
+            prev = m;
+        }
+    }
+
+    /// A corrupt or absurd config must not produce a zero-sized or unusable interface.
+    #[test]
+    fn out_of_range_scales_are_clamped() {
+        assert_eq!(OverlayMetrics::new(0.01), OverlayMetrics::new(0.5));
+        assert_eq!(OverlayMetrics::new(99.0), OverlayMetrics::new(2.0));
+        assert_eq!(OverlayMetrics::new(f32::NAN), OverlayMetrics::new(1.0));
+        assert_eq!(OverlayMetrics::new(-3.0), OverlayMetrics::new(0.5));
+    }
+
+    /// The hit box must cover the drawn box in every animation state, or a cursor on the
+    /// edge would unhover the button as it lifts and oscillate.
+    #[test]
+    fn the_hit_box_covers_the_full_lift_travel() {
+        for s in SCALES {
+            let m = OverlayMetrics::new(s);
+            let lift_span = m.hover_lift_y.abs().ceil() as i32;
+            let row_y = 500;
+
+            // Resting, and fully lifted.
+            for lift in [0, -lift_span] {
+                let draw_top = row_y + lift;
+                let draw_bottom = draw_top + m.base_button_h as i32;
+                let hit_top = row_y - lift_span;
+                let hit_bottom = hit_top + (m.base_button_h as i32 + lift_span);
+                assert!(hit_top <= draw_top && hit_bottom >= draw_bottom,
+                    "hit box misses the drawn box at {}x with lift {}", s, lift);
+            }
+        }
+    }
+
+    /// Crop must never read outside the capture, whatever rectangle it is handed.
+    #[test]
+    fn crop_clamps_instead_of_reading_out_of_bounds() {
+        let img = RgbaImage::new(40, 30);
+        for (x, y, w, h) in [
+            (0, 0, 40, 30), (35, 25, 20, 20), (-10, -10, 20, 20),
+            (100, 100, 10, 10), (-50, 5, 10, 10), (0, 0, 1, 1),
+        ] {
+            let out = crop_image(&img, x, y, w, h);
+            assert_eq!(out.width(), w.max(1));
+            assert_eq!(out.height(), h.max(1));
+        }
+    }
+
+    #[test]
+    fn rect_normalize_is_orientation_independent() {
+        let a = Rect::normalize(10, 20, 110, 220);
+        let b = Rect::normalize(110, 220, 10, 20);
+        assert_eq!(a, b);
+        assert_eq!(a, Rect { x: 10, y: 20, width: 100, height: 200 });
+        assert!(a.contains(10, 20));
+        assert!(!a.contains(110, 220));
+    }
 }

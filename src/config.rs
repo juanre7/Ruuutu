@@ -226,6 +226,70 @@ impl ScaleChoice {
     }
 }
 
+/// Scale applied to the capture overlay's interface.
+///
+/// Nominally "text scale", and the text is what it is for — but the boxes that hold the
+/// text scale with it (button height, paddings, icons, the dimension label). Growing the
+/// glyphs alone would just clip them against a 34 px button.
+///
+/// Stored as a percentage, like [`ScaleChoice`], under a separate `text_scale` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextScaleChoice {
+    P50,
+    P75,
+    Full,
+    P125,
+    P150,
+    P200,
+}
+
+impl TextScaleChoice {
+    /// Every variant, in menu order.
+    pub const ALL: [TextScaleChoice; 6] = [
+        TextScaleChoice::P50,
+        TextScaleChoice::P75,
+        TextScaleChoice::Full,
+        TextScaleChoice::P125,
+        TextScaleChoice::P150,
+        TextScaleChoice::P200,
+    ];
+
+    pub fn percent(&self) -> u32 {
+        match self {
+            TextScaleChoice::P50 => 50,
+            TextScaleChoice::P75 => 75,
+            TextScaleChoice::Full => 100,
+            TextScaleChoice::P125 => 125,
+            TextScaleChoice::P150 => 150,
+            TextScaleChoice::P200 => 200,
+        }
+    }
+
+    /// Multiplier handed to the overlay.
+    pub fn factor(&self) -> f32 {
+        self.percent() as f32 / 100.0
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            TextScaleChoice::P50 => "0,5x (más pequeño)",
+            TextScaleChoice::P75 => "0,75x",
+            TextScaleChoice::Full => "1x (predeterminado)",
+            TextScaleChoice::P125 => "1,25x",
+            TextScaleChoice::P150 => "1,5x",
+            TextScaleChoice::P200 => "2x (más grande)",
+        }
+    }
+
+    fn config_key(&self) -> String {
+        self.percent().to_string()
+    }
+
+    fn from_config_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.config_key() == key)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyPreset {
     PrtScnAltA,
@@ -266,6 +330,9 @@ pub struct AppConfig {
     pub format: ImageFormatChoice,
     pub quality: QualityChoice,
     pub scale: ScaleChoice,
+    /// Interface scale of the capture overlay. Unrelated to `scale`, which resizes the
+    /// saved image.
+    pub text_scale: TextScaleChoice,
     pub hotkey: HotkeyPreset,
     pub autostart: bool,
 }
@@ -276,6 +343,7 @@ impl Default for AppConfig {
             format: ImageFormatChoice::WebP,
             quality: QualityChoice::High,
             scale: ScaleChoice::Full,
+            text_scale: TextScaleChoice::Full,
             hotkey: HotkeyPreset::PrtScnAltA,
             autostart: false,
         }
@@ -350,6 +418,9 @@ impl AppConfig {
             scale: json_field(content, "scale")
                 .and_then(ScaleChoice::from_config_key)
                 .unwrap_or(defaults.scale),
+            text_scale: json_field(content, "text_scale")
+                .and_then(TextScaleChoice::from_config_key)
+                .unwrap_or(defaults.text_scale),
             hotkey: json_field(content, "hotkey")
                 .and_then(HotkeyPreset::from_config_key)
                 .unwrap_or(defaults.hotkey),
@@ -360,10 +431,11 @@ impl AppConfig {
     /// Serializes the config. Must stay symmetric with `from_json`.
     pub fn to_json(&self) -> String {
         format!(
-            "{{\n  \"format\": \"{}\",\n  \"quality\": \"{}\",\n  \"scale\": {},\n  \"hotkey\": \"{}\",\n  \"autostart\": {}\n}}",
+            "{{\n  \"format\": \"{}\",\n  \"quality\": \"{}\",\n  \"scale\": {},\n  \"text_scale\": {},\n  \"hotkey\": \"{}\",\n  \"autostart\": {}\n}}",
             self.format.config_key(),
             self.quality.config_key(),
             self.scale.percent(),
+            self.text_scale.config_key(),
             self.hotkey.config_key(),
             self.autostart
         )
@@ -481,17 +553,52 @@ mod tests {
         for format in FORMATS {
             for quality in QUALITIES {
                 for scale in SCALES {
-                    for hotkey in HOTKEYS {
-                        let cfg = AppConfig { format, quality, scale, hotkey, autostart: false };
-                        let parsed = AppConfig::from_json(&cfg.to_json());
-                        assert_eq!(parsed.format, format, "format lost: {}", cfg.to_json());
-                        assert_eq!(parsed.quality, quality, "quality lost: {}", cfg.to_json());
-                        assert_eq!(parsed.scale, scale, "scale lost: {}", cfg.to_json());
-                        assert_eq!(parsed.hotkey, hotkey, "hotkey lost: {}", cfg.to_json());
+                    for text_scale in TextScaleChoice::ALL {
+                        for hotkey in HOTKEYS {
+                            let cfg = AppConfig { format, quality, scale, text_scale, hotkey, autostart: false };
+                            let json = cfg.to_json();
+                            let parsed = AppConfig::from_json(&json);
+                            assert_eq!(parsed.format, format, "format lost: {}", json);
+                            assert_eq!(parsed.quality, quality, "quality lost: {}", json);
+                            assert_eq!(parsed.scale, scale, "scale lost: {}", json);
+                            assert_eq!(parsed.text_scale, text_scale, "text_scale lost: {}", json);
+                            assert_eq!(parsed.hotkey, hotkey, "hotkey lost: {}", json);
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// `scale` and `text_scale` are both bare percentages and one key name contains
+    /// the other, so they are the pair most likely to be read into each other.
+    #[test]
+    fn image_scale_and_text_scale_stay_independent() {
+        for scale in SCALES {
+            for text_scale in TextScaleChoice::ALL {
+                let cfg = AppConfig { scale, text_scale, ..AppConfig::default() };
+                let parsed = AppConfig::from_json(&cfg.to_json());
+                assert_eq!(parsed.scale, scale);
+                assert_eq!(parsed.text_scale, text_scale);
+            }
+        }
+
+        // Also with the keys written in the opposite order to `to_json`.
+        let cfg = AppConfig::from_json(r#"{"text_scale": 200, "scale": 25}"#);
+        assert_eq!(cfg.scale, ScaleChoice::P25);
+        assert_eq!(cfg.text_scale, TextScaleChoice::P200);
+    }
+
+    /// A config written by an older build has no `text_scale`, and must not lose
+    /// the settings that are there.
+    #[test]
+    fn a_config_without_text_scale_still_loads() {
+        let cfg = AppConfig::from_json(
+            "{\n  \"format\": \"Jpeg\",\n  \"quality\": \"Low\",\n  \"scale\": 50,\n  \"hotkey\": \"AltPrtScn\",\n  \"autostart\": true\n}",
+        );
+        assert_eq!(cfg.format, ImageFormatChoice::Jpeg);
+        assert_eq!(cfg.scale, ScaleChoice::P50);
+        assert_eq!(cfg.text_scale, TextScaleChoice::Full);
     }
 
     #[test]
