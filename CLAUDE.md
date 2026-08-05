@@ -79,9 +79,28 @@ evento de ratón de una ventana viva cuelga la aplicación. Ver regla 2 de `AGEN
 - `overlay.rs` — ventana sin decoración a pantalla completa que dibuja el escritorio atenuado al 50 %
   (precomputado una vez en `bg_buffer`), la selección, la etiqueta de dimensiones y los cuatro botones de
   acción. `InteractionMode` distingue `Creating` (arrastre nuevo) de `Moving` (clic dentro del rect existente).
-  El hit-testing de los botones es matemático: `compute_button_rects()` debe replicar exactamente la misma
-  aritmética de layout que usa `redraw()` — si tocas una, toca la otra o los clics dejarán de coincidir con
-  lo dibujado.
+
+  **`button_layouts()` es la única fuente de verdad del layout de los botones.** Devuelve, por botón, la
+  caja `draw` (con el desplazamiento de hover) y la caja `hit`; pintado, hover y clic leen las tres de
+  ahí. Antes eran tres cálculos independientes y ya habían divergido: el test de hover llevaba ±10 px de
+  margen vertical e ignoraba el desplazamiento, así que había una banda arriba y abajo de cada botón
+  donde el botón se iluminaba pero el clic lo atravesaba, caía en `Creating` y **borraba la selección**.
+
+  La caja `hit` abarca todo el recorrido vertical del desplazamiento (`hover_lift_y`), no la posición
+  instantánea. Si siguiera al desplazamiento, un cursor sobre el borde inferior quedaría fuera al
+  levantarse el botón, se apagaría el hover, el botón bajaría y volvería a encenderse: oscilación a cada
+  frame.
+
+  `redraw()` está partido en dos fases **por una restricción del préstamo**: `surface.buffer_mut()`
+  retiene `&mut self` mientras viva el buffer, así que a partir de ahí no se puede llamar a ningún método
+  `&self` y solo funciona el acceso directo a campos. Por eso el estado de los botones se avanza y el
+  layout se calcula *antes* de pedir el buffer. Era exactamente el motivo de que la aritmética estuviera
+  inlineada y duplicada; si añades algo que necesite un método de `&self` durante el pintado, va en la
+  fase 1.
+
+  Los dos bucles que recorren la captura (fondo atenuado en `new`, selección sin atenuar en `redraw`)
+  usan `as_raw()` por filas, no `get_pixel`: son 2 M de llamadas con comprobación de límites en 1080p y
+  8 M en 4K, y el primero está en el camino entre pulsar el atajo y ver el overlay.
 - `font.rs` — rasterizado de texto con `ab_glyph` leyendo Consolas Bold directamente de `C:\Windows\Fonts`
   (con fallback a consolas/segoeuib), e iconos Lucide SVG embebidos rasterizados con `resvg` y compuestos
   con alpha sobre el buffer. Sin assets externos: el binario no incrusta fuentes.
@@ -212,6 +231,18 @@ struct de primitivas a propósito: `overlay.rs` entra en `test_bench` por `#[pat
 
 `Guardar (S)` abre el diálogo "Guardar como"; `Ambos (Enter)` guarda sin diálogo en la carpeta por defecto
 con el formato configurado; `Copiar (C)` solo va al portapapeles; `Esc` cancela sin efectos.
+
+## Decisiones tomadas a propósito (no son descuidos)
+
+- **El overlay ocupa ~26 MB privados en 1080p y no se va a arreglar.** Son tres buffers de pantalla
+  completa (8,3 MB cada uno en 1080p): la captura original —hace falta para recortar—, el fondo atenuado
+  precomputado y el de softbuffer. Quitar `bg_buffer` cambia un `memcpy` por un bucle píxel a píxel sobre
+  toda la pantalla en cada frame: sale peor. La solución real sería repintar solo la región dañada, que es
+  un refactor grande para un problema que en 1080p no existe. Revisarlo solo si se apunta a 4K
+  multimonitor, donde son ~100 MB. El pilar de "<10 MB" es **en reposo**, y ahí se cumple (10,7 MB).
+- **La cadena de ~20 ramas `else if` del menú en `main.rs` se queda.** No hay ningún bug detrás; es riesgo
+  futuro, porque cada opción nueva son cinco líneas copiadas y la posibilidad de olvidar el `set_checked`
+  o el `save()`. Convertirla en tabla cuando toque añadir un ajuste, no antes.
 
 ## Restricciones que no se rompen (de AGENTS.md)
 

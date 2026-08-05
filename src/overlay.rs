@@ -87,6 +87,23 @@ struct AnimatedButtonState {
     hover_enter_time: Option<Instant>,
 }
 
+/// One button's geometry for a frame, produced by [`SelectionOverlay::button_layouts`].
+///
+/// **The single source of truth for the button row.** Painting, hover and click all read
+/// it, so they cannot drift apart. They used to be three independent calculations, and
+/// the hover test had already diverged: it carried ±10 px of vertical slack and ignored
+/// the hover lift, so a band above and below each button lit the button up while a click
+/// there missed it, fell through to "start a new selection" and wiped the selection the
+/// user had just made.
+#[derive(Debug, Clone, Copy)]
+struct ButtonLayout {
+    /// The box painted on screen, hover lift included.
+    draw: Rect,
+    /// The box hover and click test against. Always covers `draw`.
+    hit: Rect,
+    idx: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InteractionMode {
     None,
@@ -157,24 +174,32 @@ impl SelectionOverlay {
         let context = SbContext::new(window.clone()).map_err(|e| anyhow::anyhow!("Context error: {:?}", e))?;
         let mut surface = Surface::new(&context, window.clone()).map_err(|e| anyhow::anyhow!("Surface error: {:?}", e))?;
 
+        // `capture.rs` substitutes 1920x1080 when the metrics come back as zero, so this
+        // holds today — but the guarantee lives in another module, so it is checked here
+        // rather than unwrapped.
+        let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(total_w), NonZeroU32::new(total_h)) else {
+            anyhow::bail!("Refusing to open an overlay on an empty desktop ({}x{})", total_w, total_h);
+        };
+
         surface
-            .resize(
-                NonZeroU32::new(total_w).unwrap(),
-                NonZeroU32::new(total_h).unwrap(),
-            )
+            .resize(nz_w, nz_h)
             .map_err(|e| anyhow::anyhow!("Resize error: {:?}", e))?;
 
-        // Precompute darkened background (50% dimming)
-        let mut bg_buffer: Vec<u32> = vec![0; (total_w * total_h) as usize];
-        for y in 0..total_h {
-            for x in 0..total_w {
-                let px = desktop_img.get_pixel(x, y);
-                let r = (px[0] as u32) / 2;
-                let g = (px[1] as u32) / 2;
-                let b = (px[2] as u32) / 2;
-                bg_buffer[(y * total_w + x) as usize] = (r << 16) | (g << 8) | b;
-            }
-        }
+        // Precompute darkened background (50% dimming).
+        //
+        // Walks the raw RGBA bytes instead of calling `get_pixel` per pixel: this runs
+        // between the hotkey and the overlay appearing, so it is felt directly as latency,
+        // and it is two million bounds-checked calls at 1080p — eight at 4K.
+        let mut bg_buffer: Vec<u32> = Vec::with_capacity((total_w * total_h) as usize);
+        bg_buffer.extend(desktop_img.as_raw().chunks_exact(4).map(|px| {
+            let r = (px[0] as u32) / 2;
+            let g = (px[1] as u32) / 2;
+            let b = (px[2] as u32) / 2;
+            (r << 16) | (g << 8) | b
+        }));
+        // `redraw` copies this straight into the softbuffer, which requires the exact
+        // length; padding here keeps a mismatched capture from panicking every frame.
+        bg_buffer.resize((total_w * total_h) as usize, 0);
 
         let buttons_def = vec![
             Button { label: "Copiar (C)",       action: CaptureAction::CopyOnly,    icon: IconType::Clipboard, icon_size: 20, bg_color: 0x16A34A, hover_color: 0x22C55E },
@@ -237,36 +262,67 @@ impl SelectionOverlay {
         self.window.id()
     }
 
-    /// Calculates button layout boxes for accurate hit testing.
-    fn compute_button_rects(&self) -> Option<Vec<(Rect, usize)>> {
+    /// The row's top edge, before each button's own hover lift is applied.
+    ///
+    /// Normally sits under the selection; flips above it when the selection reaches the
+    /// bottom of the screen and the row would not fit.
+    fn buttons_row_y(&self, rect: Rect) -> i32 {
+        let below = rect.y + rect.height as i32 + self.btn_gap_y as i32;
+        if below + self.base_button_h as i32 > self.total_h as i32 {
+            (rect.y - self.base_button_h as i32 - self.btn_gap_y as i32).max(6)
+        } else {
+            below
+        }
+    }
+
+    /// Where each button is laid out for one frame.
+    fn button_layouts(&self) -> Option<Vec<ButtonLayout>> {
         let rect = self.active_rect?;
         if !self.show_buttons {
             return None;
         }
 
-        let mut btn_start_y = rect.y + rect.height as i32 + self.btn_gap_y as i32;
-        if btn_start_y + self.base_button_h as i32 > self.total_h as i32 {
-            btn_start_y = (rect.y - self.base_button_h as i32 - self.btn_gap_y as i32).max(6);
-        }
+        let row_y = self.buttons_row_y(rect);
+
+        // The hit box spans the whole vertical travel of the lift, so it is the same box
+        // whatever the animation is doing. A box that moved with the lift would shrink
+        // away from a cursor sitting on the bottom edge, unhover it, drop it back and
+        // hover it again, frame after frame.
+        let lift_span = self.hover_lift_y.abs().ceil() as u32;
+        let hit_y = row_y - lift_span as i32;
+        let hit_h = self.base_button_h as u32 + lift_span;
 
         let total_btns_w: f32 = self.anim_states.iter().map(|s| s.curr_w + self.btn_spacing as f32).sum::<f32>() - self.btn_spacing as f32;
-        let btn_start_x = (rect.x + rect.width as i32) as f32 - total_btns_w;
+        let mut cur_btn_x = (rect.x + rect.width as i32) as f32 - total_btns_w;
+        let mut list = Vec::with_capacity(self.buttons_def.len());
 
-        let mut cur_btn_x = btn_start_x;
-        let mut list = Vec::with_capacity(4);
-
-        for (idx, _btn) in self.buttons_def.iter().enumerate() {
+        for idx in 0..self.buttons_def.len() {
             let st = &self.anim_states[idx];
-            let draw_w = st.curr_w.max(10.0) as u32;
-            let draw_h = self.base_button_h as u32;
-            let draw_x = cur_btn_x as i32;
-            let draw_y = btn_start_y + st.curr_lift_y as i32;
+            let x = cur_btn_x as i32;
+            let width = st.curr_w.max(10.0) as u32;
 
-            list.push((Rect { x: draw_x, y: draw_y, width: draw_w, height: draw_h }, idx));
+            list.push(ButtonLayout {
+                draw: Rect {
+                    x,
+                    y: row_y + st.curr_lift_y as i32,
+                    width,
+                    height: self.base_button_h as u32,
+                },
+                hit: Rect { x, y: hit_y, width, height: hit_h },
+                idx,
+            });
             cur_btn_x += st.curr_w + self.btn_spacing as f32;
         }
 
         Some(list)
+    }
+
+    /// Index of the button under the cursor, from the boxes that were last painted.
+    fn hovered_button_at(&self, layouts: &[ButtonLayout]) -> Option<usize> {
+        layouts
+            .iter()
+            .find(|l| l.hit.contains(self.current_pos.0, self.current_pos.1))
+            .map(|l| l.idx)
     }
 
     /// Ends the overlay, cropping the selection out of the capture when there is one.
@@ -371,24 +427,22 @@ impl SelectionOverlay {
                         println!("[DEBUG] Left Mouse Pressed at ({}, {}). Mode: {:?}, ShowButtons: {}", self.current_pos.0, self.current_pos.1, self.mode, self.show_buttons);
                     }
 
-                    // Direct mathematical hit testing for buttons!
-                    if self.show_buttons {
-                        if let Some(btn_rects) = self.compute_button_rects() {
-                            for (b_rect, idx) in btn_rects {
-                                if self.debug_mode {
-                                    println!("[DEBUG] Checking Button {} ({}) box [{},{} -> {},{}]: Hit = {}", idx, self.buttons_def[idx].label, b_rect.x, b_rect.y, b_rect.x + b_rect.width as i32, b_rect.y + b_rect.height as i32, b_rect.contains(self.current_pos.0, self.current_pos.1));
-                                }
-
-                                if b_rect.contains(self.current_pos.0, self.current_pos.1) {
-                                    let action = self.buttons_def[idx].action;
-                                    if self.debug_mode {
-                                        println!("[DEBUG] ==> BUTTON CLICKED! Index: {}, Action: {:?}", idx, action);
-                                    }
-
-                                    self.finish_with(action);
-                                    return true;
-                                }
+                    // Hit tested against the same boxes that were painted and hovered.
+                    if let Some(layouts) = self.button_layouts() {
+                        if self.debug_mode {
+                            for l in &layouts {
+                                println!("[DEBUG] Checking Button {} ({}) box [{},{} -> {},{}]: Hit = {}", l.idx, self.buttons_def[l.idx].label, l.hit.x, l.hit.y, l.hit.x + l.hit.width as i32, l.hit.y + l.hit.height as i32, l.hit.contains(self.current_pos.0, self.current_pos.1));
                             }
+                        }
+
+                        if let Some(idx) = self.hovered_button_at(&layouts) {
+                            let action = self.buttons_def[idx].action;
+                            if self.debug_mode {
+                                println!("[DEBUG] ==> BUTTON CLICKED! Index: {}, Action: {:?}", idx, action);
+                            }
+
+                            self.finish_with(action);
+                            return true;
                         }
                     }
 
@@ -467,23 +521,108 @@ impl SelectionOverlay {
 
     pub fn redraw(&mut self) {
         let now = Instant::now();
-        let mut buffer = self.surface.buffer_mut().unwrap();
 
+        // Phase 1 — button state and layout, *before* the surface buffer exists.
+        //
+        // `buffer_mut()` borrows `self` mutably for as long as the returned buffer lives,
+        // so past that point nothing taking `&self` can be called and only direct field
+        // access works. That is exactly why this arithmetic used to sit inlined in the
+        // painting code, duplicated from `button_layouts`. Doing it up front lets both
+        // share one implementation.
+        let mut needs_anim_redraw = false;
+        let mut layouts: Vec<ButtonLayout> = Vec::new();
+        let mut hovered = None;
+
+        if self.show_buttons && self.active_rect.is_some() {
+            // Hover is decided against the layout as it was last painted: that is the row
+            // the user is actually pointing at.
+            hovered = self
+                .button_layouts()
+                .map(|last| self.hovered_button_at(&last))
+                .unwrap_or(None);
+
+            for (idx, btn) in self.buttons_def.iter().enumerate() {
+                let is_hovered = hovered == Some(idx);
+                let expanded_w = expanded_button_w(btn, self.font_size, self.pad_l, self.icon_gap, self.pad_r);
+                let st = &mut self.anim_states[idx];
+
+                if is_hovered {
+                    if st.hover_enter_time.is_none() {
+                        st.hover_enter_time = Some(now);
+                    }
+                } else {
+                    st.hover_enter_time = None;
+                }
+
+                let delay_passed = match st.hover_enter_time {
+                    Some(t) => now.duration_since(t).as_millis() >= self.hover_delay_ms,
+                    None => false,
+                };
+
+                st.target_w = if is_hovered && delay_passed { expanded_w } else { self.square_w };
+                st.target_lift_y = if is_hovered { self.hover_lift_y } else { 0.0 };
+
+                let diff_w = st.target_w - st.curr_w;
+                let diff_y = st.target_lift_y - st.curr_lift_y;
+
+                if diff_w.abs() > 0.1 || diff_y.abs() > 0.1 {
+                    st.curr_w += diff_w * self.anim_speed;
+                    st.curr_lift_y += diff_y * self.anim_speed;
+                    needs_anim_redraw = true;
+                } else {
+                    st.curr_w = st.target_w;
+                    st.curr_lift_y = st.target_lift_y;
+                }
+
+                // Still counting down to the expansion: keep the frames coming, or the
+                // delay would never elapse with the cursor held still.
+                if is_hovered && !delay_passed {
+                    needs_anim_redraw = true;
+                }
+            }
+
+            // Laid out again so the frame about to be painted reflects this tick.
+            layouts = self.button_layouts().unwrap_or_default();
+            self.hovered_button = hovered;
+        }
+
+        // Phase 2 — painting.
+        //
+        // Both of these fail when the surface goes out from under us — a monitor
+        // unplugged, a resolution change or an RDP session reconnecting while the overlay
+        // is open. Skipping the frame lets the next one retry; unwrapping would abort the
+        // process outright, and with `panic = "abort"` in release, silently.
+        let Ok(mut buffer) = self.surface.buffer_mut() else {
+            return;
+        };
+
+        if buffer.len() != self.bg_buffer.len() {
+            return;
+        }
         buffer.copy_from_slice(&self.bg_buffer);
 
         if let Some(rect) = self.active_rect {
-            let rx2 = (rect.x + rect.width as i32).min(self.total_w as i32);
-            let ry2 = (rect.y + rect.height as i32).min(self.total_h as i32);
-            let rx1 = rect.x.max(0) as u32;
-            let ry1 = rect.y.max(0) as u32;
-            let rx2 = rx2.max(0) as u32;
-            let ry2 = ry2.max(0) as u32;
+            // Clamped to the capture as well as to the window: the two are the same size
+            // in practice, but the row indexing below reads `desktop_img` and writes
+            // `buffer`, so it must stay inside both.
+            let limit_w = self.total_w.min(self.desktop_img.width());
+            let limit_h = self.total_h.min(self.desktop_img.height());
 
+            let rx1 = (rect.x.max(0) as u32).min(limit_w);
+            let ry1 = (rect.y.max(0) as u32).min(limit_h);
+            let rx2 = ((rect.x + rect.width as i32).max(0) as u32).min(limit_w);
+            let ry2 = ((rect.y + rect.height as i32).max(0) as u32).min(limit_h);
+
+            // Undim the selection by copying rows straight out of the capture. Row slices
+            // rather than `get_pixel`: this is the per-frame cost of the selection, and a
+            // full-screen drag was making a bounds-checked call per pixel per frame.
+            let src = self.desktop_img.as_raw();
             for y in ry1..ry2 {
+                let row = (y * self.total_w) as usize;
                 for x in rx1..rx2 {
-                    let px = self.desktop_img.get_pixel(x, y);
-                    let rgb = ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32);
-                    buffer[(y * self.total_w + x) as usize] = rgb;
+                    let i = (row + x as usize) * 4;
+                    buffer[row + x as usize] =
+                        ((src[i] as u32) << 16) | ((src[i + 1] as u32) << 8) | (src[i + 2] as u32);
                 }
             }
 
@@ -530,129 +669,69 @@ impl SelectionOverlay {
                 self.font_size,
             );
 
-            // Action Buttons
-            if self.show_buttons {
-                let mut btn_start_y = rect.y + rect.height as i32 + self.btn_gap_y as i32;
-                if btn_start_y + self.base_button_h as i32 > self.total_h as i32 {
-                    btn_start_y = (rect.y - self.base_button_h as i32 - self.btn_gap_y as i32).max(6);
+            // Action Buttons, from the layout computed in phase 1.
+            for layout in &layouts {
+                let btn = &self.buttons_def[layout.idx];
+                let st = &self.anim_states[layout.idx];
+                let is_hovered = hovered == Some(layout.idx);
+
+                let draw_x = layout.draw.x.max(0) as usize;
+                let draw_y = layout.draw.y.max(0) as usize;
+                let draw_w = layout.draw.width as usize;
+                let draw_h = layout.draw.height as usize;
+
+                let bg_col = if is_hovered { btn.hover_color } else { btn.bg_color };
+
+                draw_filled_rect(
+                    &mut buffer,
+                    self.total_w as usize,
+                    self.total_h as usize,
+                    draw_x,
+                    draw_y,
+                    draw_w,
+                    draw_h,
+                    bg_col,
+                );
+
+                // If DEBUG MODE: Draw bright magenta border around button hit box!
+                if self.debug_mode {
+                    draw_border_rect(&mut buffer, self.total_w as usize, self.total_h as usize, layout.hit.x.max(0) as usize, layout.hit.y.max(0) as usize, layout.hit.width as usize, layout.hit.height as usize, 0xFF00FF);
                 }
 
-                let total_btns_w: f32 = self.anim_states.iter().map(|s| s.curr_w + self.btn_spacing as f32).sum::<f32>() - self.btn_spacing as f32;
-                let btn_start_x = (rect.x + rect.width as i32) as f32 - total_btns_w;
+                let expanded_w = expanded_button_w(btn, self.font_size, self.pad_l, self.icon_gap, self.pad_r);
+                let t_expand = ((st.curr_w - self.square_w) / (expanded_w - self.square_w).max(1.0)).clamp(0.0, 1.0);
+                let center_icon_offset_x = (self.square_w - btn.icon_size as f32) / 2.0;
+                let aligned_icon_offset_x = self.pad_l as f32;
+                let anim_icon_offset_x = center_icon_offset_x * (1.0 - t_expand) + aligned_icon_offset_x * t_expand;
 
-                let mut cur_btn_x = btn_start_x;
-                let mut needs_anim_redraw = false;
-                let mut found_hover = None;
+                let icon_x = (draw_x as f32 + anim_icon_offset_x).max(0.0) as usize;
+                let icon_center_y = (draw_y as f32 + (draw_h as f32 - btn.icon_size as f32) / 2.0).max(0.0) as usize;
+                draw_svg_icon(
+                    &mut buffer,
+                    self.total_w as usize,
+                    self.total_h as usize,
+                    btn.icon,
+                    icon_x,
+                    icon_center_y,
+                    btn.icon_size,
+                );
 
-                for (idx, btn) in self.buttons_def.iter().enumerate() {
-                    let st = &mut self.anim_states[idx];
+                let max_text_x = (draw_x + draw_w).saturating_sub(self.pad_r);
+                let text_x = (draw_x as f32 + anim_icon_offset_x + btn.icon_size as f32 + self.icon_gap as f32).max(0.0) as usize;
+                let text_y = draw_y + self.pad_v;
 
-                    let is_hovered = self.current_pos.0 >= cur_btn_x as i32 && self.current_pos.0 < (cur_btn_x + st.curr_w) as i32 &&
-                                     self.current_pos.1 >= (btn_start_y - 10) && self.current_pos.1 < (btn_start_y + self.base_button_h as i32 + 10);
-
-                    if is_hovered {
-                        found_hover = Some(idx);
-                        if st.hover_enter_time.is_none() {
-                            st.hover_enter_time = Some(now);
-                        }
-                    } else {
-                        st.hover_enter_time = None;
-                    }
-
-                    let delay_passed = match st.hover_enter_time {
-                        Some(t) => now.duration_since(t).as_millis() >= self.hover_delay_ms,
-                        None => false,
-                    };
-
-                    let text_w = measure_consolas_bold_width(btn.label, self.font_size);
-                    let expanded_w = (self.pad_l + btn.icon_size as usize + self.icon_gap + text_w + self.pad_r) as f32;
-
-                    let should_expand = is_hovered && delay_passed;
-
-                    st.target_w = if should_expand { expanded_w } else { self.square_w };
-                    st.target_lift_y = if is_hovered { self.hover_lift_y } else { 0.0 };
-
-                    let diff_w = st.target_w - st.curr_w;
-                    let diff_y = st.target_lift_y - st.curr_lift_y;
-
-                    if diff_w.abs() > 0.1 || diff_y.abs() > 0.1 {
-                        st.curr_w += diff_w * self.anim_speed;
-                        st.curr_lift_y += diff_y * self.anim_speed;
-                        needs_anim_redraw = true;
-                    } else {
-                        st.curr_w = st.target_w;
-                        st.curr_lift_y = st.target_lift_y;
-                    }
-
-                    if is_hovered && !delay_passed {
-                        needs_anim_redraw = true;
-                    }
-
-                    let draw_w = st.curr_w.max(10.0) as usize;
-                    let draw_h = self.base_button_h;
-                    let draw_y = (btn_start_y + st.curr_lift_y as i32).max(0) as usize;
-                    let draw_x = cur_btn_x.max(0.0) as usize;
-
-                    let bg_col = if is_hovered { btn.hover_color } else { btn.bg_color };
-
-                    draw_filled_rect(
+                if max_text_x > text_x && t_expand > 0.05 {
+                    draw_consolas_bold_text_clipped(
                         &mut buffer,
                         self.total_w as usize,
                         self.total_h as usize,
-                        draw_x,
-                        draw_y,
-                        draw_w,
-                        draw_h,
-                        bg_col,
+                        btn.label,
+                        text_x,
+                        text_y,
+                        max_text_x,
+                        0xFFFFFF,
+                        self.font_size,
                     );
-
-                    // If DEBUG MODE: Draw bright magenta border around button hit box!
-                    if self.debug_mode {
-                        draw_border_rect(&mut buffer, self.total_w as usize, self.total_h as usize, draw_x, draw_y, draw_w, draw_h, 0xFF00FF);
-                    }
-
-                    let t_expand = ((st.curr_w - self.square_w) / (expanded_w - self.square_w).max(1.0)).clamp(0.0, 1.0);
-                    let center_icon_offset_x = (self.square_w - btn.icon_size as f32) / 2.0;
-                    let aligned_icon_offset_x = self.pad_l as f32;
-                    let anim_icon_offset_x = center_icon_offset_x * (1.0 - t_expand) + aligned_icon_offset_x * t_expand;
-
-                    let icon_x = (draw_x as f32 + anim_icon_offset_x).max(0.0) as usize;
-                    let icon_center_y = (draw_y as f32 + (draw_h as f32 - btn.icon_size as f32) / 2.0).max(0.0) as usize;
-                    draw_svg_icon(
-                        &mut buffer,
-                        self.total_w as usize,
-                        self.total_h as usize,
-                        btn.icon,
-                        icon_x,
-                        icon_center_y,
-                        btn.icon_size,
-                    );
-
-                    let max_text_x = (draw_x + draw_w).saturating_sub(self.pad_r);
-                    let text_x = (draw_x as f32 + anim_icon_offset_x + btn.icon_size as f32 + self.icon_gap as f32).max(0.0) as usize;
-                    let text_y = (draw_y + self.pad_v).max(0);
-
-                    if max_text_x > text_x && t_expand > 0.05 {
-                        draw_consolas_bold_text_clipped(
-                            &mut buffer,
-                            self.total_w as usize,
-                            self.total_h as usize,
-                            btn.label,
-                            text_x,
-                            text_y,
-                            max_text_x,
-                            0xFFFFFF,
-                            self.font_size,
-                        );
-                    }
-
-                    cur_btn_x += st.curr_w + self.btn_spacing as f32;
-                }
-
-                self.hovered_button = found_hover;
-
-                if needs_anim_redraw {
-                    self.window.request_redraw();
                 }
             }
         }
@@ -676,8 +755,22 @@ impl SelectionOverlay {
             draw_consolas_bold_text(&mut buffer, self.total_w as usize, self.total_h as usize, click_hint, 30, 88, 0xE2E8F0, 12.0);
         }
 
-        buffer.present().unwrap();
+        if let Err(e) = buffer.present() {
+            if self.debug_mode {
+                println!("[DEBUG] Dropped a frame, present failed: {:?}", e);
+            }
+        }
+
+        if needs_anim_redraw {
+            self.window.request_redraw();
+        }
     }
+}
+
+/// Width a button needs once its label is showing: padding, icon, gap, text, padding.
+fn expanded_button_w(btn: &Button, font_size: f32, pad_l: usize, icon_gap: usize, pad_r: usize) -> f32 {
+    let text_w = measure_consolas_bold_width(btn.label, font_size);
+    (pad_l + btn.icon_size as usize + icon_gap + text_w + pad_r) as f32
 }
 
 fn draw_filled_rect(buffer: &mut [u32], buf_w: usize, buf_h: usize, x: usize, y: usize, w: usize, h: usize, color: u32) {
