@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 juanre7
 
-//! Embeds the Ruuutu icon into `ruuutu.exe`.
+//! Embeds the Ruuutu icon and the version metadata into `ruuutu.exe`.
 //!
 //! The icon is not an asset on disk: it is drawn by `src/icon.rs`, the very same code the tray
 //! uses at runtime, so the shell icon and the tray icon can never drift apart. This script
 //! rasterizes it at the sizes Windows asks for, packs them into an `.ico` under `OUT_DIR`, and
 //! hands a generated `.rc` to `embed-resource`.
+//!
+//! The same `.rc` carries a `VERSIONINFO` block, which is what fills in the Details tab of the
+//! file's properties in Explorer and what installers and IT tooling read to identify a build.
+//! Its numbers come from `CARGO_PKG_VERSION`, so bumping the version in `Cargo.toml` is enough.
 
 #[path = "src/icon.rs"]
 mod icon;
@@ -41,11 +45,65 @@ fn main() {
     let rc_path = out_dir.join("ruuutu.rc");
     let mut rc = fs::File::create(&rc_path).expect("create ruuutu.rc");
     writeln!(rc, "1 ICON \"{}\"", ico_path.display().to_string().replace('\\', "\\\\")).expect("write ruuutu.rc");
+    write!(rc, "{}", version_info()).expect("write ruuutu.rc");
     drop(rc);
 
     embed_resource::compile(&rc_path, embed_resource::NONE)
         .manifest_required()
         .expect("embed icon resource");
+}
+
+/// The `VERSIONINFO` resource, built from `CARGO_PKG_VERSION`.
+///
+/// The binary numbers are four 16-bit fields, so the crate version is padded with a trailing
+/// zero for the unused build component. A non-numeric suffix such as `1.0.1-rc1` has no place
+/// in them and is simply dropped from the numeric fields; the readable strings keep it.
+///
+/// Every string here is deliberately ASCII. Which compiler `embed-resource` ends up calling
+/// (`rc.exe` or `windres`) and which code page it assumes for a file without a BOM is not
+/// something this script controls, and a mangled accent in the properties dialog is a poor
+/// trade for the two characters it would buy.
+fn version_info() -> String {
+    let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|p| p.parse::<u16>().unwrap_or(0));
+    let (major, minor, patch) = (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    );
+
+    format!(
+        r#"
+1 VERSIONINFO
+FILEVERSION {major},{minor},{patch},0
+PRODUCTVERSION {major},{minor},{patch},0
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "juanre7"
+            VALUE "FileDescription", "Ruuutu - Captura de pantalla para Windows"
+            VALUE "FileVersion", "{version}"
+            VALUE "InternalName", "ruuutu"
+            VALUE "LegalCopyright", "Copyright (C) 2026 juanre7 - GPL-3.0-or-later"
+            VALUE "OriginalFilename", "ruuutu.exe"
+            VALUE "ProductName", "Ruuutu"
+            VALUE "ProductVersion", "{version}"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+"#
+    )
 }
 
 /// Pack every size into an ICO container: 6-byte header, one 16-byte directory entry per image,

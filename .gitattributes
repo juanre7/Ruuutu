@@ -1,0 +1,12 @@
+# Normaliza los finales de línea para que no dependan de la configuración de cada
+# colaborador. En el repositorio todo va con LF; en el árbol de trabajo, Git usa lo
+# que corresponda a cada plataforma.
+* text=auto eol=lf
+
+# El texto de la GPL se distribuye tal cual: no es nuestro y no se toca.
+LICENSE -text
+
+*.png binary
+*.ico binary
+*.webp binary
+*.jpg binary
