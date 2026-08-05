@@ -37,5 +37,23 @@ jobs:
 
       # Puerta real: cualquier aviso nuevo tumba el build. Incluye las herramientas de
       # `devtools`, que comparten los módulos de dibujo con la aplicación.
+      #
+      # SI ESTE PASO SE ROMPE EN UN PUSH QUE NO TOCA NADA RELACIONADO, ES ESTO:
+      # el toolchain de arriba es `stable` flotante, así que el runner puede traer un clippy
+      # más nuevo que el de tu máquina y estrenar lints sobre código que ya estaba escrito.
+      # Ya pasó una vez: el runner iba con 1.97 y la máquina de desarrollo con 1.94, y
+      # `collapsible_match` saltó solo aquí. El aviso era legítimo, así que se arregló y ya.
+      #
+      # Si esa divergencia acaba molestando más de lo que aporta, la solución es un
+      # `rust-toolchain.toml` en la raíz del repositorio fijando una versión concreta:
+      #
+      #     [toolchain]
+      #     channel = "1.97"
+      #     components = ["clippy"]
+      #
+      # rustup lo respeta tanto en local como en CI, así que las dos partes dejan de
+      # divergir y subir de versión pasa a ser un acto deliberado, no una sorpresa. El
+      # precio es que los lints nuevos ya no llegan solos. Decisión aplazada a propósito:
+      # de momento compensa enterarse de ellos.
       - name: Clippy
         run: cargo clippy --all-targets --features devtools -- -D warnings
