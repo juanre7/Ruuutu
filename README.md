@@ -1,4 +1,6 @@
-# Ruuutu (Pantalla en Finés) 🖥️📸
+# Ruuutu 🖥️📸
+
+*El nombre "Ruuutu" viene de la palabra finesa **[Ruutu](https://en.wiktionary.org/wiki/ruutu#:~:text=%23%2Dsymbol)-,screen,-(informational%20viewing)** (pantalla).*
 
 Software minimalista, ultra-ligero y de alto rendimiento para captura de pantalla de área seleccionable estilo Lightshot, escrito íntegramente en **Rust**.
 
