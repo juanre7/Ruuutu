@@ -701,7 +701,16 @@ impl SelectionOverlay {
             let label_w = (measure_consolas_bold_width(&dim_text, self.font_size) + self.dim_pad_h * 2) as u32;
             let label_h = (self.font_size as usize + self.dim_pad_v * 2).max(self.min_dim_label_h) as u32;
             let label_x = rx1;
-            let label_y = if ry1 >= label_h + 6 { ry1 - label_h - 6 } else { ry1 + 6 };
+            // The button row is the other thing that wants the strip above the selection,
+            // so the label is placed around whatever band the row ended up occupying.
+            let button_band = layouts.first().map(|l| (l.hit.y, l.hit.height as i32));
+            let label_y = dimension_label_y(
+                rect.y,
+                label_h as i32,
+                self.btn_gap_y as i32,
+                button_band,
+            )
+            .max(0) as u32;
 
             draw_filled_rect(&mut buffer, self.total_w as usize, self.total_h as usize, label_x as usize, label_y as usize, label_w as usize, label_h as usize, 0x1E293B);
             draw_consolas_bold_text(
@@ -842,6 +851,48 @@ fn buttons_row_y(rect: Rect, button_h: usize, gap: usize, total_h: u32) -> i32 {
     } else {
         below
     }
+}
+
+/// Top edge of the dimension label ("1920 x 1080 px · WEBP").
+///
+/// It normally sits just above the selection — but so does the button row whenever the
+/// selection is close enough to the bottom of the screen to make the row flip up. Both
+/// claimed that strip independently and the buttons were painted straight over the
+/// label. When the row is up there, the label goes above the row instead.
+///
+/// `button_band` is the row's `(top, height)`, taken from the hit boxes so it covers the
+/// buttons in every animation state, or `None` while there is no row (mid-drag).
+///
+/// Three candidate positions are tried in order of preference and the first one that is
+/// on screen and clear of the row wins. A single "is the row above me?" test is not
+/// enough: a selection only a few pixels tall at the *top* of the screen has no room
+/// above either, and the label dropped inside it then spilled out of the bottom and
+/// under a row sitting below.
+fn dimension_label_y(
+    sel_top: i32,
+    label_h: i32,
+    gap: i32,
+    button_band: Option<(i32, i32)>,
+) -> i32 {
+    let clear = |y: i32| {
+        y >= 0
+            && button_band.is_none_or(|(row_y, row_h)| y + label_h <= row_y || y >= row_y + row_h)
+    };
+
+    // Only a row that flipped above the selection competes for the strip above it.
+    let ceiling = button_band
+        .filter(|(row_y, _)| *row_y < sel_top)
+        .map_or(sel_top, |(row_y, _)| row_y);
+
+    // Below the row: always on screen and always clear, so it is the guaranteed fallback.
+    let below_row = button_band.map_or(sel_top + gap, |(row_y, row_h)| (row_y + row_h + gap).max(0));
+
+    for candidate in [ceiling - label_h - gap, sel_top + gap] {
+        if clear(candidate) {
+            return candidate;
+        }
+    }
+    below_row
 }
 
 /// Width a button needs once its label is showing: padding, icon, gap, text, padding.
@@ -1089,6 +1140,81 @@ mod tests {
         let y = buttons_row_y(tight, h, gap, 1080);
         assert!(y < 100, "row should sit above the selection, got {}", y);
         assert!(y >= 6, "row should stay on screen, got {}", y);
+    }
+
+    /// Do two vertical bands `(top, height)` share a pixel?
+    fn bands_overlap(a: (i32, i32), b: (i32, i32)) -> bool {
+        a.0 < b.0 + b.1 && b.0 < a.0 + a.1
+    }
+
+    /// The reported bug: a small selection near the bottom makes the button row flip
+    /// above the selection, where the dimension label already lived, and the buttons were
+    /// painted straight over it.
+    #[test]
+    fn the_label_never_sits_under_the_button_row() {
+        for s in SCALES {
+            let m = OverlayMetrics::new(s);
+            let label_h = (m.font_size as usize + m.dim_pad_v * 2).max(m.min_dim_label_h) as i32;
+            let lift = m.hover_lift_y.abs().ceil() as i32;
+            let row_h = m.base_button_h as i32 + lift;
+            let gap = m.btn_gap_y as i32;
+
+            // Swept rather than sampled: the first attempt at this only special-cased a
+            // row that had flipped *above* the selection, and missed that a very short
+            // selection at the top has no room above either.
+            for sel_h in [6, 20, 60, 200, 600, 1080] {
+                for sel_top in (0..=(1080 - sel_h).max(0)).step_by(20) {
+                    let rect = Rect { x: 100, y: sel_top, width: 200, height: sel_h as u32 };
+                    let row_y = buttons_row_y(rect, m.base_button_h, m.btn_gap_y, 1080) - lift;
+                    let band = (row_y, row_h);
+
+                    let label_y = dimension_label_y(sel_top, label_h, gap, Some(band));
+
+                    assert!(
+                        !bands_overlap((label_y, label_h), band),
+                        "label and buttons overlap at {}x, selection top {} height {}: \
+                         label [{}, {}) vs row [{}, {})",
+                        s, sel_top, sel_h,
+                        label_y, label_y + label_h, band.0, band.0 + band.1
+                    );
+                    assert!(label_y >= 0, "label off the top at {}x: {}", s, label_y);
+                }
+            }
+        }
+    }
+
+    /// The ordinary case must not move: buttons below, label just above the selection.
+    #[test]
+    fn the_label_stays_above_the_selection_when_the_row_is_below() {
+        let m = OverlayMetrics::new(1.0);
+        let label_h = 29;
+        let gap = m.btn_gap_y as i32;
+        let sel_top = 400;
+        // Row below the selection.
+        let band = Some((sel_top + 200 + gap, m.base_button_h as i32));
+
+        assert_eq!(dimension_label_y(sel_top, label_h, gap, band), sel_top - label_h - gap);
+        // And identically with no row at all, mid-drag.
+        assert_eq!(dimension_label_y(sel_top, label_h, gap, None), sel_top - label_h - gap);
+    }
+
+    /// A selection running the full height of the screen leaves nothing above it: the
+    /// label drops inside rather than off the top edge.
+    #[test]
+    fn the_label_drops_inside_when_there_is_no_room_above() {
+        let m = OverlayMetrics::new(1.0);
+        let label_h = 29;
+        let gap = m.btn_gap_y as i32;
+        let row_h = m.base_button_h as i32;
+
+        // Selection from the very top, row forced up to its floor of 6.
+        let band = Some((6, row_h));
+        let y = dimension_label_y(0, label_h, gap, band);
+        assert!(y >= 0);
+        assert!(!bands_overlap((y, label_h), (6, row_h)));
+
+        // No row, no room above.
+        assert_eq!(dimension_label_y(0, label_h, gap, None), gap);
     }
 
     /// Crop must never read outside the capture, whatever rectangle it is handed.

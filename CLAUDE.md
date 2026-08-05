@@ -103,6 +103,20 @@ evento de ratón de una ventana viva cuelga la aplicación. Ver regla 2 de `AGEN
   usan `as_raw()` por filas, no `get_pixel`: son 2 M de llamadas con comprobación de límites en 1080p y
   8 M en 4K, y el primero está en el camino entre pulsar el atajo y ver el overlay.
 
+  **La colocación de la fila y de la etiqueta son funciones libres y puras**
+  (`buttons_row_x`, `buttons_row_y`, `dimension_label_y`), testeables sin sesión gráfica. Hay tres
+  colisiones ya resueltas ahí y **la regla es resolverlas en el origen, no en el consumidor**:
+  - La fila cuelga del borde **derecho** de la selección, así que una selección estrecha a la izquierda
+    la empuja fuera de pantalla. Se desliza la fila **entera** (`buttons_row_x`). Recortar cada botón
+    por separado a x≥0 era el bug: los cuatro acababan clavados en x=0, unos sobre otros, y además las
+    cajas de clic no se movían con ellos.
+  - La fila salta **por encima** de la selección cuando no cabe debajo, y ahí ya estaba la etiqueta de
+    dimensiones. `dimension_label_y` prueba tres posiciones candidatas y se queda con la primera que
+    esté en pantalla y libre de la fila.
+  - No basta con preguntar "¿la fila está encima de mí?": una selección de pocos píxeles **arriba** del
+    todo tampoco tiene sitio encima, y la etiqueta metida dentro se desbordaba por abajo contra una fila
+    que estaba debajo. El test barre alto y posición de selección en las seis escalas.
+
   **`OverlayMetrics::new(text_scale)` concentra toda la aritmética de escalado** y es pura, sin ventana,
   para poder testearla sin sesión gráfica. Cada medida es el diseño 1x multiplicado por la escala del
   usuario, redondeado y con suelo en 1 px (a 0,5x varios paddings caerían a 0). No escala solo la fuente:
