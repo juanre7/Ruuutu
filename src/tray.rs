@@ -151,8 +151,16 @@ impl SystemTray {
 
         let icon = create_tray_icon()?;
 
+        // Clic izquierdo = captura inmediata; el menú es solo del clic derecho.
+        //
+        // `tray-icon` abre el menú en **ambos** botones por defecto. Con eso, el clic
+        // izquierdo levantaba el popup y `TrackPopupMenu` entra en su propio bucle modal:
+        // el evento `Click` ya se había enviado al canal, pero `about_to_wait` no volvía a
+        // correr hasta que el usuario cerraba el menú, así que el overlay aparecía *después*
+        // del menú y sin foco. Ver issue #2.
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
+            .with_menu_on_left_click(false)
             .with_tooltip("Ruuutu Captura de Pantalla")
             .with_icon(icon)
             .build()

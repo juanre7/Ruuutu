@@ -231,6 +231,7 @@ impl SelectionOverlay {
 
         #[allow(deprecated)]
         let window = Arc::new(event_loop.create_window(attrs).context("Failed to create overlay window")?);
+        force_foreground(&window);
         let context = SbContext::new(window.clone()).map_err(|e| anyhow::anyhow!("Context error: {:?}", e))?;
         let mut surface = Surface::new(&context, window.clone()).map_err(|e| anyhow::anyhow!("Surface error: {:?}", e))?;
 
@@ -815,6 +816,57 @@ impl SelectionOverlay {
 
         if needs_anim_redraw {
             self.window.request_redraw();
+        }
+    }
+}
+
+/// Pull the freshly created overlay to the foreground and give it keyboard focus.
+///
+/// Windows only lets the process that *currently owns* the foreground hand it over, so a
+/// tray application woken by a hotkey or a tray click is refused: the window is shown but
+/// never activated. That was the second half of issue #2 — the overlay was on screen and
+/// painted, yet Esc did nothing and the first click was spent activating the window instead
+/// of starting a selection. `WindowAttributes::with_active(true)` asks winit for the focus
+/// and hits the very same lock.
+///
+/// The documented way through it is to share an input queue with whoever holds the
+/// foreground: while the two threads are attached, the foreground check sees us as that
+/// thread and lets the call succeed. Detach immediately — leaving them attached would
+/// serialise our input queue with a foreign process's for as long as the overlay lives, so
+/// a hang in that process would freeze the capture.
+fn force_foreground(window: &Window) {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+    };
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else { return };
+    let hwnd = win32.hwnd.get();
+
+    unsafe {
+        let foreground = GetForegroundWindow();
+        let our_thread = GetCurrentThreadId();
+        let fg_thread = if foreground == 0 {
+            0
+        } else {
+            GetWindowThreadProcessId(foreground, std::ptr::null_mut())
+        };
+
+        // Attaching a thread to itself fails, and there is nothing to borrow when the
+        // desktop already has no foreground window.
+        let attached =
+            fg_thread != 0 && fg_thread != our_thread && AttachThreadInput(fg_thread, our_thread, 1) != 0;
+
+        SetForegroundWindow(hwnd);
+        BringWindowToTop(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
+
+        if attached {
+            AttachThreadInput(fg_thread, our_thread, 0);
         }
     }
 }
