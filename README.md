@@ -1,6 +1,6 @@
 # Ruuutu 🖥️📸
 
-*El nombre "Ruuutu" viene de la palabra finesa **[Ruutu](https://en.wiktionary.org/wiki/ruutu#:~:text=%23%2Dsymbol)-,screen,-%28informational%20viewing%29)** (pantalla).*
+*El nombre "Ruuutu" viene de la palabra finesa **[ruutu](https://en.wiktionary.org/wiki/ruutu)** (pantalla).*
 
 Software minimalista, ultra-ligero y de alto rendimiento para captura de pantalla de área seleccionable estilo Lightshot, escrito íntegramente en **Rust**.
 
