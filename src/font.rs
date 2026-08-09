@@ -244,3 +244,173 @@ pub fn draw_svg_icon(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL_ICONS: [IconType; 4] =
+        [IconType::Clipboard, IconType::Save, IconType::Combo, IconType::Cancel];
+
+    /// A canvas plus its backing buffer, so the tests can inspect the pixels afterwards.
+    fn canvas(w: usize, h: usize, fill: u32) -> Vec<u32> {
+        vec![fill; w * h]
+    }
+
+    fn painted(pixels: &[u32], background: u32) -> usize {
+        pixels.iter().filter(|&&p| p != background).count()
+    }
+
+    /// The face has to load at all. Every other test here would still pass on the silent
+    /// fallback path — `measure` estimates a width and `draw` returns without painting —
+    /// so this is the one that says whether text is being rendered from a real font.
+    #[test]
+    fn a_font_face_is_available() {
+        assert!(
+            consolas_bold().is_some(),
+            "no usable face under C:\\Windows\\Fonts: text would silently not render"
+        );
+    }
+
+    #[test]
+    fn measuring_grows_with_the_text_and_with_the_size() {
+        assert_eq!(measure_consolas_bold_width("", 17.0), 0);
+
+        let short = measure_consolas_bold_width("Copiar", 17.0);
+        let long = measure_consolas_bold_width("Copiar (C)", 17.0);
+        assert!(short > 0, "a non-empty string measured as zero");
+        assert!(long > short, "the longer label did not measure wider");
+
+        let big = measure_consolas_bold_width("Copiar (C)", 34.0);
+        assert!(big > long, "doubling the font size did not widen the measurement");
+    }
+
+    /// The measurement is what `button_layouts` sizes the expanded buttons from, so it has
+    /// to match what actually gets painted. A width that fell short would clip the label.
+    #[test]
+    fn the_measured_width_covers_what_gets_drawn() {
+        let (w, h) = (400, 60);
+        let mut pixels = canvas(w, h, 0);
+        let text = "Guardar (S)";
+        let measured = measure_consolas_bold_width(text, 17.0);
+
+        draw_consolas_bold_text(&mut Canvas::new(&mut pixels, w, h), text, 10, 10, 0xFFFFFF, 17.0);
+
+        let rightmost = pixels
+            .iter()
+            .enumerate()
+            .filter(|(_, &p)| p != 0)
+            .map(|(i, _)| i % w)
+            .max()
+            .expect("the text painted nothing");
+        assert!(
+            rightmost < 10 + measured,
+            "glyphs reached x={rightmost}, past the measured width {measured} from x=10"
+        );
+    }
+
+    /// The clip is what lets a button reveal its label as it expands: nothing may be
+    /// painted past `max_x`, and a narrower clip must show strictly less.
+    #[test]
+    fn clipping_stops_the_text_at_the_boundary() {
+        let (w, h) = (300, 60);
+        // Comfortably inside the ~69 px the label measures from x=10, so glyphs are
+        // genuinely cut off rather than the whole string happening to fit.
+        let max_x = 50;
+        let mut pixels = canvas(w, h, 0);
+
+        draw_consolas_bold_text_clipped(
+            &mut Canvas::new(&mut pixels, w, h),
+            "Guardar (S)",
+            10,
+            10,
+            max_x,
+            0xFFFFFF,
+            17.0,
+        );
+
+        for (i, &p) in pixels.iter().enumerate() {
+            assert!(p == 0 || i % w < max_x, "a glyph landed at x={} past the clip", i % w);
+        }
+
+        let clipped = painted(&pixels, 0);
+        let mut wide = canvas(w, h, 0);
+        draw_consolas_bold_text_clipped(
+            &mut Canvas::new(&mut wide, w, h),
+            "Guardar (S)",
+            10,
+            10,
+            w,
+            0xFFFFFF,
+            17.0,
+        );
+        assert!(clipped > 0, "the clipped call painted nothing at all");
+        assert!(painted(&wide, 0) > clipped, "widening the clip revealed no extra glyphs");
+    }
+
+    /// Drawing outside the canvas must be dropped, not wrap around to the opposite edge
+    /// or index out of bounds.
+    #[test]
+    fn drawing_past_the_canvas_paints_nothing_and_does_not_panic() {
+        let (w, h) = (60, 40);
+        let mut pixels = canvas(w, h, 0);
+        draw_consolas_bold_text(&mut Canvas::new(&mut pixels, w, h), "fuera", w + 50, h + 50, 0xFFFFFF, 17.0);
+        assert_eq!(painted(&pixels, 0), 0);
+    }
+
+    #[test]
+    fn every_icon_rasterizes_into_the_buffer() {
+        for icon in ALL_ICONS {
+            let (w, h) = (60, 60);
+            let mut pixels = canvas(w, h, 0);
+            draw_svg_icon(&mut Canvas::new(&mut pixels, w, h), icon, 10, 10, 32);
+            assert!(painted(&pixels, 0) > 50, "{icon:?} rasterized to almost nothing");
+        }
+    }
+
+    /// The cache is keyed by `(type, size)`; a second call must composite the very same
+    /// pixels rather than re-rasterize into something subtly different.
+    #[test]
+    fn the_icon_cache_returns_identical_pixels() {
+        let (w, h) = (60, 60);
+        let mut first = canvas(w, h, 0);
+        let mut second = canvas(w, h, 0);
+        draw_svg_icon(&mut Canvas::new(&mut first, w, h), IconType::Save, 5, 5, 24);
+        draw_svg_icon(&mut Canvas::new(&mut second, w, h), IconType::Save, 5, 5, 24);
+        assert_eq!(first, second);
+    }
+
+    /// A zero-size icon is a legitimate state at the smallest text scale, and it must be
+    /// a no-op instead of a division by zero inside the transform.
+    #[test]
+    fn a_zero_sized_icon_is_a_no_op() {
+        let (w, h) = (40, 40);
+        let mut pixels = canvas(w, h, 0);
+        draw_svg_icon(&mut Canvas::new(&mut pixels, w, h), IconType::Cancel, 5, 5, 0);
+        assert_eq!(painted(&pixels, 0), 0);
+    }
+
+    /// The blend reads `Pixmap`'s premultiplied alpha as `src + dst * (1 - a)`. Over white,
+    /// the white icon must stay white: multiplying by the coverage a second time is the
+    /// bug this catches, and it shows up as grey fringing on the antialiased edges.
+    #[test]
+    fn compositing_over_white_never_darkens_the_icon() {
+        let (w, h) = (60, 60);
+        let mut pixels = canvas(w, h, 0xFFFFFF);
+        draw_svg_icon(&mut Canvas::new(&mut pixels, w, h), IconType::Combo, 10, 10, 32);
+
+        for (i, &p) in pixels.iter().enumerate() {
+            assert_eq!(p, 0xFFFFFF, "pixel {i} came out as {p:#08x} instead of white");
+        }
+    }
+
+    /// Every channel is packed back into 8 bits, so a blend that overflowed would wrap
+    /// into the neighbouring channel and change the colour instead of clipping it.
+    #[test]
+    fn compositing_never_overflows_into_the_next_channel() {
+        let (w, h) = (60, 60);
+        let mut pixels = canvas(w, h, 0xFFFFFF);
+        draw_svg_icon(&mut Canvas::new(&mut pixels, w, h), IconType::Clipboard, 10, 10, 32);
+        assert!(pixels.iter().all(|&p| p <= 0xFFFFFF), "a blended pixel escaped the 24-bit range");
+    }
+}
