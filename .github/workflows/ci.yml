@@ -21,7 +21,10 @@ jobs:
       - name: Instalar toolchain de Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          # llvm-tools-preview lo exige cargo-llvm-cov: la cobertura sale de la
+          # instrumentación del propio LLVM (`-C instrument-coverage`) y necesita
+          # `llvm-profdata`/`llvm-cov` de la misma versión que el compilador.
+          components: clippy, llvm-tools-preview
 
       - name: Cachear dependencias
         uses: Swatinem/rust-cache@v2
@@ -29,8 +32,27 @@ jobs:
       # La suite unitaria cubre la lógica pura: persistencia de config.rs y geometría de
       # overlay.rs. El resto de la batería (`test_bench`) necesita escritorio real, toca el
       # portapapeles y captura la pantalla, así que no corre aquí.
-      - name: Tests
-        run: cargo test --bin ruuutu
+      - name: Instalar cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # `cargo llvm-cov` ejecuta los mismos tests que `cargo test --bin ruuutu`, así que
+      # este paso sigue siendo la puerta: si un test falla, el build cae aquí. El informe
+      # va en formato nativo de Codecov (`--codecov`) y no en lcov porque lcov solo lleva
+      # cobertura de línea; el formato propio añade cobertura de región.
+      - name: Tests y cobertura
+        run: cargo llvm-cov --bin ruuutu --codecov --output-path codecov.json
+
+      - name: Subir cobertura a Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov.json
+          slug: juanre7/Ruuutu
+          # El repositorio es público, así que la subida funciona sin token; el secreto
+          # es opcional y solo sirve para evitar el límite de peticiones anónimas.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Un fallo de red o un límite de Codecov no debe tumbar un build cuyos tests
+          # han pasado: la cobertura es informativa, no una puerta.
+          fail_ci_if_error: false
 
       - name: Compilación de release
         run: cargo build --release

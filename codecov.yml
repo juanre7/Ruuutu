@@ -1,0 +1,27 @@
+# Configuración de Codecov (https://docs.codecov.com/docs/codecov-yaml).
+#
+# La cobertura de Ruuutu nunca va a ser alta y eso no es un defecto: la mayor parte del
+# código toca GDI, la bandeja del sistema, un hook de teclado de bajo nivel y diálogos COM,
+# nada de lo cual se puede ejecutar en un runner sin sesión gráfica. Lo que sí se mide es la
+# lógica pura —persistencia de `config.rs` y geometría de `overlay.rs`—, que es justo donde
+# los bugs silenciosos han aparecido antes.
+#
+# Por eso los estados son `informational`: comentan en el pull request pero no lo bloquean.
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, files"
+  require_changes: true
+
+ignore:
+  # Binarios auxiliares de diseño visual (feature `devtools`): no son producto.
+  - "src/bin/**"
+  - "build.rs"
