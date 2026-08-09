@@ -21,7 +21,28 @@ comment:
   layout: "condensed_header, diff, files"
   require_changes: true
 
+# Se excluyen los módulos que no tienen ninguna línea ejecutable sin sesión de escritorio.
+# No es maquillar el número: contarlos como "sin cubrir" mide algo que no se puede medir aquí
+# y deja un porcentaje que parece un repositorio roto cuando la aplicación funciona. Lo que
+# queda dentro sí es lógica que un runner puede ejecutar, así que ahí el número significa algo.
+#
+# Si alguno de estos módulos llega a tener partes puras separables, se sacan a su propio
+# módulo y se quitan de aquí, en vez de relajar la lista.
 ignore:
   # Binarios auxiliares de diseño visual (feature `devtools`): no son producto.
   - "src/bin/**"
   - "build.rs"
+  # Event loop de winit y máquina de estados de la aplicación: necesita ventana y bandeja.
+  - "src/main.rs"
+  # Diálogo "Guardar como" por COM (IFileSaveDialog): abre UI modal de Windows.
+  - "src/save_dialog.rs"
+  # Icono y menú del área de notificación: Shell_NotifyIconW.
+  - "src/tray.rs"
+  # Captura GDI del escritorio virtual: BitBlt/GetDIBits sobre el escritorio de entrada.
+  - "src/capture.rs"
+  # Atajos globales y hook WH_KEYBOARD_LL: se registran contra la sesión interactiva.
+  - "src/hotkey.rs"
+  # AttachConsole del proceso padre.
+  - "src/console.rs"
+  # Portapapeles vía OLE.
+  - "src/clipboard.rs"
