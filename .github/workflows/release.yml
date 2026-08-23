@@ -5,8 +5,9 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+# Sin permisos por defecto: el job de publicación pide explícitamente los tres que
+# necesita y nada más.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,22 +15,63 @@ env:
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      # Crear la release y subirle los ficheros.
+      contents: write
+      # Guardar la procedencia (attestation) del .exe.
+      attestations: write
+      # Token OIDC con el que Sigstore firma esa procedencia. Es efímero: no hay ninguna
+      # clave de firma que guardar, ni que rotar, ni que se pueda filtrar.
+      id-token: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # La release se publica con `gh` y el GITHUB_TOKEN del job, no con el token de
+          # git del checkout.
+          persist-credentials: false
 
       - name: Instalar toolchain de Rust
-        uses: dtolnay/rust-toolchain@stable
+        # Fijada por SHA, así que el canal va en `toolchain` en vez de en el nombre de la
+        # referencia.
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # rama stable
+        with:
+          toolchain: stable
 
+      # `--lib` incluye `config` y `storage`, que están en la biblioteca; `--bin ruuutu`,
+      # la geometría del overlay. Publicar sin pasar por los dos no tiene sentido.
       - name: Tests
-        run: cargo test --bin ruuutu
+        run: cargo test --lib --bin ruuutu
 
       # Sin `--bin ruuutu`: las herramientas de diseño están tras la feature `devtools`, así que
       # una compilación normal ya produce únicamente ruuutu.exe.
       - name: Compilación de release
         run: cargo build --release
 
-      # El usuario descarga un .exe suelto de internet; darle con qué comprobarlo es lo mínimo.
+      # El usuario descarga un .exe suelto de internet; darle con qué comprobarlo es lo
+      # mínimo. Esa comprobación tiene dos mitades, y esta es la primera.
+      #
+      # Procedencia SLSA firmada con Sigstore: deja constancia verificable de que este .exe
+      # concreto salió de este repositorio, de este commit y de este workflow, y no del
+      # portátil de alguien. Se comprueba con:
+      #
+      #     gh attestation verify ruuutu.exe --repo juanre7/Ruuutu
+      #
+      # Es la mitad que dice de dónde viene el fichero; el SHA256 de más abajo es la que
+      # dice que no se ha corrompido por el camino.
+      - name: Firmar la procedencia del binario
+        id: attest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: target/release/ruuutu.exe
+
+      # La attestation también viaja como fichero suelto en la release, para poder
+      # verificarla sin depender de la API de GitHub (`cosign verify-blob-attestation`).
+      # Es un bundle de Sigstore, y por eso se llama .sigstore.json y no de otra forma.
+      - name: Adjuntar la procedencia a la release
+        shell: pwsh
+        run: Copy-Item "${{ steps.attest.outputs.bundle-path }}" ruuutu.exe.sigstore.json
+
       - name: Calcular SHA256
         shell: pwsh
         run: |
@@ -45,5 +87,6 @@ jobs:
           gh release create $env:GITHUB_REF_NAME `
             target\release\ruuutu.exe `
             ruuutu.exe.sha256 `
+            ruuutu.exe.sigstore.json `
             --title $env:GITHUB_REF_NAME `
             --generate-notes

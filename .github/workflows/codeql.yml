@@ -1,0 +1,45 @@
+name: CodeQL
+
+# Análisis estático del código Rust con CodeQL. Rust dejó de ser preview en octubre de
+# 2025 y cubre todo el OWASP Top 10 salvo dependencias vulnerables, que es justo de lo que
+# se encarga Dependabot en este repositorio.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Semanal: los análisis programados capturan reglas nuevas de CodeQL sobre código que
+    # ya no se toca, que es donde un aviso nuevo pasaría desapercibido para siempre.
+    - cron: "43 5 * * 1"
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analizar Rust
+    # Ubuntu y no windows-latest a propósito: `build-mode: none` no compila el proyecto,
+    # solo parsea las fuentes, así que el runner de Windows no aportaría nada y tarda más.
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@e4d2851c4593439ac10bdcd57c5b06cac73b4775 # v3.37.8
+        with:
+          languages: rust
+          # Rust admite análisis sin compilación. Compilar exigiría un runner de Windows y
+          # el toolchain entero para no analizar ni una línea más.
+          build-mode: none
+
+      - name: Analizar
+        uses: github/codeql-action/analyze@e4d2851c4593439ac10bdcd57c5b06cac73b4775 # v3.37.8
+        with:
+          category: "/language:rust"

@@ -380,7 +380,7 @@ impl HotkeyPreset {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub format: ImageFormatChoice,
     pub quality: QualityChoice,
@@ -515,7 +515,10 @@ impl AppConfig {
     }
 }
 
-/// Windows Registry Portable Autostart Helper (HKCU\Software\Microsoft\Windows\CurrentVersion\Run)
+/// Reads the autostart entry from the Windows registry
+/// (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
+///
+/// Off Windows there is no registry to read, so it always answers `false`.
 pub fn is_autostart_enabled() -> bool {
     #[cfg(windows)]
     {
@@ -537,7 +540,13 @@ pub fn is_autostart_enabled() -> bool {
     false
 }
 
-pub fn set_autostart_enabled(enable: bool) -> Result<()> {
+/// Writes or removes the autostart entry in the Windows registry.
+///
+/// Off Windows there is nowhere to write it: the call does nothing and autostart stays
+/// `false`, which is what `is_autostart_enabled` reports there too. The binary only ever
+/// builds on Windows; this arm exists so the core library builds anywhere, which is what
+/// makes it testable and fuzzable.
+pub fn set_autostart_enabled(#[cfg_attr(not(windows), allow(unused_variables))] enable: bool) -> Result<()> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Registry::{

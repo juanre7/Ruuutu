@@ -1,0 +1,71 @@
+name: Fuzzing
+
+# Pasada corta de fuzzing sobre el núcleo (`src/lib.rs`) en cada cambio.
+#
+# Esto no sustituye a una campaña larga: sesenta segundos por target no encuentran un bug
+# profundo, y el corpus arranca vacío en cada ejecución porque el runner no guarda nada
+# entre pasadas. Lo que sí hace, y es el motivo de que esté en CI, es que los targets no se
+# pudran: un cambio que rompa la compilación del fuzzing, o que meta un panic fácil de
+# alcanzar en el parser de configuración, se ve aquí y no seis meses después.
+# La pasada semanal es más larga (quince minutos) porque ahí sí compensa buscar.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Una pasada semanal más larga, que es donde el fuzzing gana algo de profundidad.
+    - cron: "31 4 * * 2"
+
+permissions: {}
+
+jobs:
+  fuzz:
+    name: cargo-fuzz
+    # libFuzzer necesita los sanitizers de LLVM: no existe en Windows. Por eso el núcleo
+    # está separado del binario, que sí es exclusivamente Windows.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [config_from_json, encode_image]
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # cargo-fuzz exige nightly: `-Z build-std` y la instrumentación de sanitizers no
+      # están en estable.
+      - name: Instalar toolchain de Rust (nightly)
+        # Fijada por SHA, así que la acción ya no puede deducir el canal del nombre de la
+        # referencia (`@nightly`): hay que dárselo en `toolchain`.
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # rama stable
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      - name: Instalar cargo-fuzz
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzzear ${{ matrix.target }}
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=${{ github.event_name == 'schedule' && 900 || 60 }} -rss_limit_mb=4096
+
+      # Si algo peta, el caso que lo provoca es lo único que hace falta para reproducirlo.
+      - name: Guardar los casos que han fallado
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+          retention-days: 7

@@ -1,0 +1,58 @@
+name: Scorecard
+
+# Analiza el repositorio con OpenSSF Scorecard (https://scorecard.dev) y publica el
+# resultado, que es lo que alimenta la insignia del README y la ficha pública del proyecto.
+#
+# `publish_results: true` es obligatorio para la insignia: sin él el análisis se ejecuta,
+# sube el SARIF a la pestaña Security y nada más; la API de scorecard.dev no tiene qué
+# servir y la insignia sale como "unknown".
+on:
+  # Scorecard vuelve a puntuar Branch-Protection cuando cambian las reglas de la rama.
+  branch_protection_rule:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Análisis de Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      # Publica el SARIF en la pestaña Security del repositorio.
+      security-events: write
+      # Token OIDC con el que Scorecard firma el resultado que publica.
+      id-token: write
+      contents: read
+      # Lectura del historial de workflows, que es de donde salen CI-Tests y Packaging.
+      actions: read
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # Scorecard no necesita empujar nada: dejar el token de git en el checkout solo
+          # amplía lo que un paso posterior comprometido podría hacer.
+          persist-credentials: false
+
+      - name: Ejecutar el análisis
+        uses: ossf/scorecard-action@55891bbd73f2425e97637d96e306fc9d491d0b21 # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # El SARIF crudo, por si hace falta mirar un hallazgo concreto sin esperar a que la
+      # API lo indexe.
+      - name: Guardar el SARIF como artefacto
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Subir el SARIF a code scanning
+        uses: github/codeql-action/upload-sarif@e4d2851c4593439ac10bdcd57c5b06cac73b4775 # v3.37.8
+        with:
+          sarif_file: results.sarif
