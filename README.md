@@ -2,7 +2,17 @@
 
 [![CI](https://github.com/juanre7/Ruuutu/actions/workflows/ci.yml/badge.svg)](https://github.com/juanre7/Ruuutu/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/juanre7/Ruuutu/branch/main/graph/badge.svg)](https://codecov.io/gh/juanre7/Ruuutu)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/juanre7/Ruuutu/badge)](https://scorecard.dev/viewer/?uri=github.com/juanre7/Ruuutu)
+<!--
+  La insignia lee la puntuación de api.scorecard.dev, que es donde el workflow la publica.
+  La URL corta de insignia que documenta scorecard-action
+  (api.scorecard.dev/projects/.../badge) redirige a shields.io, y su endpoint
+  `ossf-scorecard` todavía consulta el host antiguo api.securityscorecards.dev, que no
+  tiene este proyecto y devuelve «invalid repo path». El color es fijo y neutro a
+  propósito: shields.io no sabe colorear por tramos un valor leído de un JSON, y un verde
+  fijo afirmaría algo sobre la nota que dejaría de ser cierto en cuanto cambiara.
+  Cuando el host antiguo indexe el proyecto, se puede volver a la URL corta.
+-->
+[![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fjuanre7%2FRuuutu&query=%24.score&label=openssf%20scorecard&suffix=%2F10&color=informational)](https://scorecard.dev/viewer/?uri=github.com/juanre7/Ruuutu)
 [![CodeQL](https://github.com/juanre7/Ruuutu/actions/workflows/codeql.yml/badge.svg)](https://github.com/juanre7/Ruuutu/actions/workflows/codeql.yml)
 
 *El nombre "Ruuutu" viene de la palabra finesa **[ruutu](https://en.wiktionary.org/wiki/ruutu)** (pantalla).*
