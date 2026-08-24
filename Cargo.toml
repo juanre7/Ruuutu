@@ -70,7 +70,7 @@ anyhow = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # libwebp real: el encoder WebP de `image` es solo VP8L sin pérdidas (sin parámetro de calidad).
 webp = { version = "0.3", default-features = false }
-dirs = "5.0"
+dirs = "6.0"
 chrono = "0.4"
 
 # Solo en tiempo de compilación: rasterizan e incrustan el icono del .exe. No entran en el binario.
