@@ -44,6 +44,12 @@ Son compromisos de un proyecto mantenido por una sola persona, no de un equipo c
 
 Se te menciona en el aviso publicado salvo que prefieras que no.
 
+### Publicación del arreglo
+
+Cada vulnerabilidad corregida se nombra explícitamente en las notas de la release que la
+arregla, con su identificador de aviso si lo tiene. Si descargas una versión nueva, las
+notas te dicen qué se ha arreglado y si te afectaba.
+
 ### Divulgación coordinada
 
 Se pide esperar a que haya versión con el arreglo, o a que se agoten esos 90 días, lo que
