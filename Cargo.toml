@@ -83,7 +83,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # `cfg` en lugar de arrastrarlas a una compilación del núcleo que nunca las usa.
 [target.'cfg(windows)'.dependencies]
 ab_glyph = "0.2"
-resvg = "0.44"
+resvg = "0.48"
 arboard = "3.4"
 winit = "0.30"
 softbuffer = "0.4"
