@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Inicializar CodeQL
-        uses: github/codeql-action/init@e4d2851c4593439ac10bdcd57c5b06cac73b4775 # v3.37.8
+        uses: github/codeql-action/init@42947a340483f03ba47bb1a039b2c519aab3df85 # v3.37.8
         with:
           languages: rust
           # Rust admite análisis sin compilación. Compilar exigiría un runner de Windows y
@@ -40,6 +40,6 @@ jobs:
           build-mode: none
 
       - name: Analizar
-        uses: github/codeql-action/analyze@e4d2851c4593439ac10bdcd57c5b06cac73b4775 # v3.37.8
+        uses: github/codeql-action/analyze@42947a340483f03ba47bb1a039b2c519aab3df85 # v3.37.8
         with:
           category: "/language:rust"
