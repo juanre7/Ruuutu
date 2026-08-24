@@ -7,6 +7,17 @@
 
 *El nombre "Ruuutu" viene de la palabra finesa **[ruutu](https://en.wiktionary.org/wiki/ruutu)** (pantalla).*
 
+> **In English** — Ruuutu is a minimal, low-footprint screenshot tool for **Windows**, in the
+> style of Lightshot, written entirely in Rust with no GPU and no heavy UI framework. It idles
+> in the system tray under 10 MB of RAM; `PrtScn` brings up a selection overlay, and the
+> capture goes to a WebP, PNG or JPEG file, to the clipboard, or both. Grab `ruuutu.exe` from
+> the [latest release](https://github.com/juanre7/Ruuutu/releases/latest) — one binary, no
+> installer, no dependencies — or build it with `cargo build --release`.
+>
+> The rest of this README is in Spanish. Contribution guidelines are in
+> [CONTRIBUTING.md](CONTRIBUTING.md) and the security policy, including how to report a
+> vulnerability privately, is in [SECURITY.md](SECURITY.md).
+
 Software minimalista, ultra-ligero y de alto rendimiento para captura de pantalla de área seleccionable estilo Lightshot, escrito íntegramente en **Rust**.
 
 ---
@@ -130,6 +141,13 @@ no las produzca:
 cargo run --features devtools --bin margin_editor
 cargo run --features devtools --bin test_bench
 ```
+
+---
+
+## 🤝 Contribuir
+
+Cómo abrir un issue, qué se espera de un pull request y qué tiene que llevar tests:
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ---
 
