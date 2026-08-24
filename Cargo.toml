@@ -87,7 +87,7 @@ resvg = "0.44"
 arboard = "3.4"
 winit = "0.30"
 softbuffer = "0.4"
-global-hotkey = "0.6"
+global-hotkey = "0.8"
 tray-icon = "0.19"
 
 windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell_Common"] }
