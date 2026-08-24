@@ -1,0 +1,37 @@
+# Actualizaciones automáticas de dependencias.
+#
+# Los dos ecosistemas importan por motivos distintos:
+#
+# - `cargo` es la cadena de suministro del binario que se descarga la gente. Aquí entra
+#   libwebp a través de `webp`/`libwebp-sys`, que es código C: cuando aparece un CVE, el
+#   parche llega por esta vía.
+# - `github-actions` mantiene vivos los SHA con los que están fijadas las acciones. Fijar
+#   por hash sin nadie que lo actualice no es seguridad, es quedarse anclado a una versión
+#   vulnerable para siempre; Dependabot entiende el formato `@sha # vX.Y.Z` y sube ambos.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  # El crate de fuzzing tiene su propio Cargo.toml y está fuera del workspace, así que no
+  # lo cubre la entrada de arriba.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(fuzz)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

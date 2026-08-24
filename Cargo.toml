@@ -19,6 +19,14 @@ exclude = ["/.github"]
 [features]
 devtools = []
 
+# El núcleo puro: persistencia de ajustes y codificación de imagen, sin nada de Win32.
+# Existe para que ese código se pueda compilar, testear y fuzzear fuera de Windows; el
+# binario lo reexporta en lugar de declarar los módulos otra vez, así que hay una única
+# copia de la lógica.
+[lib]
+name = "ruuutu"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ruuutu"
 path = "src/main.rs"
@@ -53,31 +61,37 @@ name = "test_bench"
 path = "src/bin/test_bench.rs"
 required-features = ["devtools"]
 
+# Dependencias del núcleo (`src/lib.rs`): ajustes y codificación de imagen. Son las únicas
+# que no dependen del sistema de ventanas, y por eso son las únicas incondicionales: el
+# núcleo compila en cualquier plataforma, que es lo que permite fuzzearlo con cargo-fuzz
+# (libFuzzer necesita los sanitizers de LLVM y no existe en Windows).
 [dependencies]
 anyhow = "1.0"
-ab_glyph = "0.2"
-resvg = "0.44"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # libwebp real: el encoder WebP de `image` es solo VP8L sin pérdidas (sin parámetro de calidad).
 webp = { version = "0.3", default-features = false }
-
-arboard = "3.4"
-winit = "0.30"
-softbuffer = "0.4"
-global-hotkey = "0.6"
-tray-icon = "0.19"
 dirs = "5.0"
 chrono = "0.4"
-
-windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell_Common"] }
-windows-core = "0.62"
 
 # Solo en tiempo de compilación: rasterizan e incrustan el icono del .exe. No entran en el binario.
 [build-dependencies]
 embed-resource = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Todo lo demás es la aplicación: superposición, bandeja, portapapeles, atajo global y las
+# API de Win32. Ruuutu solo se ejecuta en Windows, así que estas dependencias van tras el
+# `cfg` en lugar de arrastrarlas a una compilación del núcleo que nunca las usa.
 [target.'cfg(windows)'.dependencies]
+ab_glyph = "0.2"
+resvg = "0.44"
+arboard = "3.4"
+winit = "0.30"
+softbuffer = "0.4"
+global-hotkey = "0.6"
+tray-icon = "0.19"
+
+windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell_Common"] }
+windows-core = "0.62"
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

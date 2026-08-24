@@ -1,0 +1,42 @@
+# Ruuutu's fuzzing project (cargo-fuzz + libFuzzer).
+#
+# It is a separate crate, deliberately outside any workspace: it pulls in `libfuzzer-sys`,
+# requires nightly and builds with sanitizer instrumentation, none of which should touch a
+# normal `ruuutu.exe` build.
+#
+# libFuzzer needs LLVM's sanitizers, so this only runs on Linux or macOS. That is why
+# `config` and `storage` live in `src/lib.rs` rather than inside the binary: they are the
+# part of the code that does not depend on Win32, and therefore the only part fuzzable.
+[package]
+name = "ruuutu-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dependencies.ruuutu]
+path = ".."
+
+# The targets are declared by hand (`cargo fuzz` would append them) to make it explicit
+# that `test = false` and `doc = false` are deliberate: a fuzz target is not a test.
+[[bin]]
+name = "config_from_json"
+path = "fuzz_targets/config_from_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "encode_image"
+path = "fuzz_targets/encode_image.rs"
+test = false
+doc = false
+bench = false

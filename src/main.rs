@@ -25,15 +25,18 @@ use winit::window::WindowId;
 
 mod capture;
 mod clipboard;
-mod config;
 mod console;
 mod font;
 mod hotkey;
 mod icon;
 mod overlay;
 mod save_dialog;
-mod storage;
 mod tray;
+
+// `config` and `storage` live in the library (`src/lib.rs`) so they can be tested and
+// fuzzed off Windows. Importing them at the crate root keeps every `crate::config::…` and
+// `crate::storage::…` in the other modules working, with a single copy of the code.
+use ruuutu::{config, storage};
 
 use capture::capture_desktop;
 use clipboard::copy_to_clipboard;

@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/juanre7/Ruuutu/actions/workflows/ci.yml/badge.svg)](https://github.com/juanre7/Ruuutu/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/juanre7/Ruuutu/branch/main/graph/badge.svg)](https://codecov.io/gh/juanre7/Ruuutu)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/juanre7/Ruuutu/badge)](https://scorecard.dev/viewer/?uri=github.com/juanre7/Ruuutu)
+[![CodeQL](https://github.com/juanre7/Ruuutu/actions/workflows/codeql.yml/badge.svg)](https://github.com/juanre7/Ruuutu/actions/workflows/codeql.yml)
 
 *El nombre "Ruuutu" viene de la palabra finesa **[ruutu](https://en.wiktionary.org/wiki/ruutu)** (pantalla).*
 
@@ -94,9 +96,30 @@ Los tests de lógica pura (persistencia de la configuración y geometría de la 
 necesitan sesión gráfica:
 
 ```bash
-cargo test --bin ruuutu
+cargo test --lib --bin ruuutu
 cargo clippy --all-targets
 ```
+
+`--lib` son `config` y `storage`; `--bin ruuutu`, la geometría del overlay. Esos dos
+módulos del `--lib` viven en `src/lib.rs` en vez de dentro del binario porque no tocan
+Win32, y eso les da dos cosas que el resto del código no tiene: se compilan y se testean en
+cualquier plataforma (`cargo test --lib` funciona en Linux, sin escritorio), y se pueden
+fuzzear. El binario los reexporta, así que no hay dos copias de nada.
+
+### Fuzzing
+
+`cargo-fuzz` necesita los sanitizers de LLVM, así que solo funciona en Linux o macOS y
+exige nightly:
+
+```bash
+cargo install cargo-fuzz
+cargo +nightly fuzz run config_from_json    # el lector de config.json
+cargo +nightly fuzz run encode_image        # el codificador, libwebp incluido
+```
+
+Los dos targets están en [`fuzz/fuzz_targets/`](fuzz/fuzz_targets/) y cada uno documenta
+qué busca. El primero existe porque `config.json` lo lee un parser de JSON escrito a mano;
+el segundo, porque el camino WebP entra en código C.
 
 El repositorio incluye además varias herramientas internas de diseño visual —previsualización de la
 tipografía, editor interactivo de márgenes, maqueta del menú de bandeja y un banco de pruebas que sí
@@ -106,6 +129,35 @@ no las produzca:
 ```bash
 cargo run --features devtools --bin margin_editor
 cargo run --features devtools --bin test_bench
+```
+
+---
+
+## 🔒 Seguridad y cadena de suministro
+
+Cómo informar de una vulnerabilidad, plazos de respuesta y dónde tiene sentido buscar:
+**[SECURITY.md](SECURITY.md)**.
+
+Lo que hay montado, y para qué sirve cada pieza:
+
+| Pieza | Qué aporta |
+|---|---|
+| [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/juanre7/Ruuutu) | Audita el repositorio cada semana y publica el resultado. Es la insignia de arriba. |
+| CodeQL | Análisis estático del código Rust en cada pull request y una pasada semanal. |
+| cargo-fuzz | Fuzzing del parser de configuración y del codificador de imagen en cada cambio. |
+| Dependabot | Actualiza dependencias de Cargo y los SHA de las acciones. |
+| Acciones fijadas por SHA | Una etiqueta se puede mover; un hash no. Sin esto, `@v5` puede ser código distinto mañana. |
+| Permisos mínimos | Los workflows arrancan sin permisos y cada job pide solo los suyos. |
+| Procedencia firmada | Cada release lleva una attestation de Sigstore que la ata a este repositorio y a este commit. |
+
+### Verificar una descarga
+
+```powershell
+# Que el fichero es el que se publicó
+Get-FileHash ruuutu.exe -Algorithm SHA256   # compáralo con ruuutu.exe.sha256
+
+# Que lo construyó este repositorio, y no alguien que subió un .exe con el mismo nombre
+gh attestation verify ruuutu.exe --repo juanre7/Ruuutu
 ```
 
 ---
