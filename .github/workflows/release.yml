@@ -61,7 +61,7 @@ jobs:
       # dice que no se ha corrompido por el camino.
       - name: Firmar la procedencia del binario
         id: attest
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: target/release/ruuutu.exe
 
